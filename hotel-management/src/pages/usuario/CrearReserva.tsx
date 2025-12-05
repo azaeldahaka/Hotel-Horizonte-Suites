@@ -1,353 +1,263 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { useAuth } from '@/contexts/AuthContext'
-import { supabase } from '@/lib/supabase'
-import { Habitacion } from '@/types'
-import { Calendar, Users, CreditCard, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Bed, Utensils, Dumbbell, Waves, MapPin, Phone, Mail, Star, ArrowRight, ChevronRight, Sparkles } from 'lucide-react'
 
-// Función auxiliar para fechas locales
-const getTodayLocalString = () => {
-  const hoy = new Date();
-  const y = hoy.getFullYear();
-  const m = (hoy.getMonth() + 1).toString().padStart(2, '0');
-  const d = hoy.getDate().toString().padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+// Imágenes para el carrusel (Asegurate de tenerlas en public/images/... o se repetirán)
+const HERO_IMAGES = [
+  '/images/lobby/hero.jpg',
+  '/images/services/pool.jpg',
+  '/images/services/restaurant.jpg' 
+]
 
-export const CrearReserva = () => {
-  const { id } = useParams()
-  const { user, loading: authLoading } = useAuth()
-  const navigate = useNavigate()
+export const Home = () => {
+  const [currentImage, setCurrentImage] = useState(0)
 
-  const [habitacion, setHabitacion] = useState<Habitacion | null>(null)
-  const [fechaEntrada, setFechaEntrada] = useState('')
-  const [fechaSalida, setFechaSalida] = useState('')
-  const [numHuespedes, setNumHuespedes] = useState(1)
-  const [metodoPago, setMetodoPago] = useState<'tarjeta' | 'efectivo' | 'transferencia'>('tarjeta')
-  const [datosTarjeta, setDatosTarjeta] = useState({
-    numero: '',
-    titular: '',
-    expiracion: '',
-    cvv: ''
-  })
-  const [paso, setPaso] = useState<'fechas' | 'pago' | 'confirmacion'>('fechas')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [total, setTotal] = useState(0)
-
-  // Fecha mínima de salida (+1 día)
-  const getMinFechaSalida = () => {
-    if (!fechaEntrada) return getTodayLocalString();
-    try {
-      const [y, m, d] = fechaEntrada.split('-').map(Number);
-      const entradaDate = new Date(y, m - 1, d);
-      entradaDate.setDate(entradaDate.getDate() + 1);
-      const yS = entradaDate.getFullYear();
-      const mS = (entradaDate.getMonth() + 1).toString().padStart(2, '0');
-      const dS = entradaDate.getDate().toString().padStart(2, '0');
-      return `${yS}-${mS}-${dS}`;
-    } catch (e) {
-      return getTodayLocalString();
-    }
-  }
-
+  // Efecto para el carrusel automático
   useEffect(() => {
-    if (id && !authLoading) { 
-      cargarHabitacion()
-    }
-  }, [id, authLoading])
-
-  useEffect(() => {
-    calcularTotal()
-  }, [fechaEntrada, fechaSalida, habitacion])
-
-  const cargarHabitacion = async () => {
-    try {
-      const { data } = await supabase
-        .from('habitaciones')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle()
-      
-      if (data) setHabitacion(data)
-    } catch (error) {
-      console.error('Error cargando habitación:', error)
-    }
-  }
-
-  const calcularTotal = () => {
-    if (fechaEntrada && fechaSalida && habitacion?.precio_noche) {
-      const [yE, mE, dE] = fechaEntrada.split('-').map(Number)
-      const entrada = new Date(yE, mE - 1, dE)
-      const [yS, mS, dS] = fechaSalida.split('-').map(Number)
-      const salida = new Date(yS, mS - 1, dS)
-      
-      const noches = Math.ceil((salida.getTime() - entrada.getTime()) / (1000 * 60 * 60 * 24))
-      if (noches > 0) {
-        setTotal(noches * habitacion.precio_noche)
-      }
-    }
-  }
-
-  const validarDisponibilidad = async () => {
-    setError('')
-    setLoading(true)
-
-    try {
-      const hoy = new Date()
-      hoy.setHours(0, 0, 0, 0)
-
-      const [yE, mE, dE] = fechaEntrada.split('-').map(Number)
-      const entrada = new Date(yE, mE - 1, dE)
-
-      const [yS, mS, dS] = fechaSalida.split('-').map(Number)
-      const salida = new Date(yS, mS - 1, dS)
-
-      if (entrada < hoy) throw new Error('La fecha de entrada no puede ser anterior a hoy')
-      if (salida <= entrada) throw new Error('La fecha de salida debe ser posterior a la fecha de entrada')
-      if (numHuespedes < 1 || numHuespedes > (habitacion?.capacidad || 1)) throw new Error(`El número de huéspedes debe estar entre 1 y ${habitacion?.capacidad}`)
-
-      const { data } = await supabase.functions.invoke('check-room-availability', {
-        body: {
-          habitacion_id: id,
-          fecha_entrada: fechaEntrada,
-          fecha_salida: fechaSalida
-        }
-      })
-
-      const responseData = data?.data || data
-      if (!responseData?.available) throw new Error('La habitación no está disponible para estas fechas')
-
-      setPaso('pago')
-    } catch (err: any) {
-      setError(err.message || 'Error al verificar disponibilidad')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const procesarReserva = async () => {
-    setError('')
-    setLoading(true)
-    try {
-      if (metodoPago === 'tarjeta') {
-        if (!datosTarjeta.numero || !datosTarjeta.titular || !datosTarjeta.expiracion || !datosTarjeta.cvv) {
-          throw new Error('Completa todos los datos de la tarjeta')
-        }
-        if (datosTarjeta.numero.replace(/\s/g, '').length !== 16) throw new Error('El número de tarjeta debe tener 16 dígitos')
-        if (datosTarjeta.cvv.length !== 3) throw new Error('El CVV debe tener 3 dígitos')
-      }
-
-      // 1. Insertar Reserva
-      const { data: reservaData, error: reservaError } = await supabase
-        .from('reservas')
-        .insert([{
-          usuario_id: user?.id,
-          habitacion_id: id,
-          fecha_entrada: fechaEntrada,
-          fecha_salida: fechaSalida,
-          num_huespedes: numHuespedes,
-          estado: 'activa',
-          total: total
-        }])
-        .select()
-
-      if (reservaError) throw reservaError
-      const reservaId = reservaData[0]?.id
-
-      // Simular espera
-      await new Promise(resolve => setTimeout(resolve, 1500))
-
-      // 2. Registrar Pago
-      const { error: pagoError } = await supabase
-        .from('pagos')
-        .insert([{
-          reserva_id: reservaId,
-          monto: total,
-          metodo_pago: metodoPago,
-          estado: 'completado'
-        }])
-
-      if (pagoError) throw pagoError
-
-      // 3. Actualizar Habitación
-      await supabase
-        .from('habitaciones')
-        .update({ estado: 'ocupada' })
-        .eq('id', id)
-
-      // --- 4. ENVIAR EMAIL (¡RESTAURADO!) ---
-      console.log("Intentando enviar email de confirmación...");
-      const { error: emailError } = await supabase.functions.invoke('send-email', {
-        body: {
-          email: user?.email,
-          nombre: user?.nombre,
-          reserva: {
-            id: reservaId,
-            habitacion_numero: habitacion?.numero,
-            habitacion_tipo: habitacion?.tipo,
-            fecha_entrada: new Date(fechaEntrada).toLocaleDateString('es-ES'),
-            fecha_salida: new Date(fechaSalida).toLocaleDateString('es-ES'),
-            num_huespedes: numHuespedes,
-            total: total.toLocaleString('es-ES')
-          }
-        }
-      });
-
-      if (emailError) {
-        console.error("❌ Error enviando email:", emailError);
-      } else {
-        console.log("✅ Email enviado con éxito.");
-      }
-      // --------------------------------------
-
-      setPaso('confirmacion')
-
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Error al procesar la reserva')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (authLoading || !habitacion) { 
-    return <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-amber-600"></div>
-    </div>
-  }
+    const timer = setInterval(() => {
+      setCurrentImage((prev) => (prev + 1) % HERO_IMAGES.length)
+    }, 5000) // Cambia cada 5 segundos
+    return () => clearInterval(timer)
+  }, [])
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12">
-      <div className="max-w-4xl mx-auto px-4">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Reservar Habitación {habitacion.numero}</h1>
-          <p className="text-slate-600">{habitacion.tipo}</p>
+    <div className="min-h-screen bg-white overflow-hidden">
+      
+      {/* --- HERO SECTION CON CARRUSEL --- */}
+      <div className="relative h-screen w-full overflow-hidden">
+        <AnimatePresence mode='wait'>
+          <motion.div
+            key={currentImage}
+            initial={{ scale: 1.1, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.5 }}
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: `url(${HERO_IMAGES[currentImage]})` }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/30 to-black/70" />
+          </motion.div>
+        </AnimatePresence>
+
+        <div className="relative h-full flex flex-col items-center justify-center text-center px-4 z-10">
+          <motion.div
+            initial={{ y: 50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: 0.8, delay: 0.5 }}
+            className="max-w-5xl"
+          >
+            <h2 className="text-teal-400 font-medium tracking-[0.2em] uppercase mb-4 text-sm md:text-base">
+              Bienvenido al Paraíso
+            </h2>
+            <h1 className="text-5xl md:text-8xl font-serif font-bold text-white mb-6 tracking-tight leading-tight">
+              HORIZONTE <span className="text-transparent bg-clip-text bg-gradient-to-r from-teal-200 to-teal-500">SUITES</span>
+            </h1>
+            <p className="text-lg md:text-2xl text-slate-200 mb-10 font-light max-w-2xl mx-auto leading-relaxed">
+              Donde la naturaleza se encuentra con el lujo moderno. <br className="hidden md:block"/> Una experiencia inolvidable te espera en Salta.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+              <Link
+                to="/register"
+                className="group relative px-8 py-4 bg-teal-600 text-white font-semibold rounded-full overflow-hidden shadow-2xl transition-all hover:scale-105 hover:shadow-teal-500/50"
+              >
+                <span className="relative z-10 flex items-center gap-2">
+                  Reservar Ahora <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform"/>
+                </span>
+                <div className="absolute inset-0 bg-teal-500 transform scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-300"/>
+              </Link>
+              
+              <Link
+                to="/login"
+                className="px-8 py-4 text-white font-medium hover:text-teal-200 transition-colors flex items-center gap-2"
+              >
+                Iniciar Sesión <ChevronRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </motion.div>
         </div>
 
-        {/* Pasos */}
-        <div className="flex items-center justify-center mb-8">
-          <div className={`flex items-center ${paso === 'fechas' ? 'text-amber-600' : 'text-green-600'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'fechas' ? 'bg-amber-600' : 'bg-green-600'} text-white font-bold`}>1</div>
-            <span className="ml-2 font-medium">Fechas</span>
-          </div>
-          <div className="w-24 h-1 bg-slate-300 mx-4"></div>
-          <div className={`flex items-center ${paso === 'pago' ? 'text-amber-600' : paso === 'confirmacion' ? 'text-green-600' : 'text-slate-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'pago' ? 'bg-amber-600' : paso === 'confirmacion' ? 'bg-green-600' : 'bg-slate-300'} text-white font-bold`}>2</div>
-            <span className="ml-2 font-medium">Pago</span>
-          </div>
-          <div className="w-24 h-1 bg-slate-300 mx-4"></div>
-          <div className={`flex items-center ${paso === 'confirmacion' ? 'text-green-600' : 'text-slate-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'confirmacion' ? 'bg-green-600' : 'bg-slate-300'} text-white font-bold`}>3</div>
-            <span className="ml-2 font-medium">Confirmación</span>
-          </div>
+        {/* Indicadores del Carrusel */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-3 z-20">
+          {HERO_IMAGES.map((_, idx) => (
+            <button
+              key={idx}
+              onClick={() => setCurrentImage(idx)}
+              className={`h-1 rounded-full transition-all duration-300 ${
+                idx === currentImage ? 'w-8 bg-white' : 'w-2 bg-white/40 hover:bg-white/80'
+              }`}
+            />
+          ))}
         </div>
-
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-red-700">
-            <AlertCircle className="h-5 w-5 flex-shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Paso 1: Fechas */}
-        {paso === 'fechas' && (
-          <div className="bg-white rounded-xl p-8 shadow-lg">
-            <h2 className="text-2xl font-bold mb-6">Selecciona las Fechas</h2>
-            <div className="grid md:grid-cols-2 gap-6 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2"><Calendar className="inline h-4 w-4 mr-2" />Fecha de Entrada</label>
-                <input type="date" value={fechaEntrada} onChange={(e) => { setFechaEntrada(e.target.value); if(fechaSalida && e.target.value >= fechaSalida) setFechaSalida('') }} min={getTodayLocalString()} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2"><Calendar className="inline h-4 w-4 mr-2" />Fecha de Salida</label>
-                <input type="date" value={fechaSalida} onChange={(e) => setFechaSalida(e.target.value)} min={getMinFechaSalida()} disabled={!fechaEntrada} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none disabled:bg-slate-50" required />
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2"><Users className="inline h-4 w-4 mr-2" />Número de Huéspedes</label>
-              <input type="number" value={numHuespedes} onChange={(e) => setNumHuespedes(parseInt(e.target.value))} min="1" max={habitacion.capacidad} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" required />
-              <p className="text-sm text-slate-500 mt-1">Capacidad máxima: {habitacion.capacidad} personas</p>
-            </div>
-
-            {total > 0 && (
-              <div className="mb-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-700">Total a Pagar:</span>
-                  <span className="text-2xl font-bold text-amber-600">${total.toLocaleString('es-ES')}</span>
-                </div>
-              </div>
-            )}
-
-            <button onClick={validarDisponibilidad} disabled={loading || !fechaEntrada || !fechaSalida} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? <div className="flex items-center justify-center gap-2"><Loader2 className="animate-spin h-5 w-5"/> Verificando...</div> : 'Continuar al Pago'}
-            </button>
-          </div>
-        )}
-
-        {/* Paso 2: Pago */}
-        {paso === 'pago' && (
-          <div className="bg-white rounded-xl p-8 shadow-lg">
-            <h2 className="text-2xl font-bold mb-6">Información de Pago</h2>
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-3">Método de Pago</label>
-              <div className="grid grid-cols-3 gap-4">
-                {(['tarjeta', 'efectivo', 'transferencia'] as const).map((metodo) => (
-                  <button key={metodo} onClick={() => setMetodoPago(metodo)} className={`p-4 rounded-lg border-2 transition-all ${metodoPago === metodo ? 'border-amber-600 bg-amber-50' : 'border-slate-300 hover:border-slate-400'}`}>
-                    <CreditCard className="h-6 w-6 mx-auto mb-2" />
-                    <p className="text-sm font-medium capitalize">{metodo}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {metodoPago === 'tarjeta' && (
-              <div className="space-y-4 mb-6">
-                <div><label className="block text-sm font-medium text-slate-700 mb-2">Número de Tarjeta</label><input type="text" value={datosTarjeta.numero} onChange={(e) => { const v = e.target.value.replace(/\s/g, '').replace(/\D/g, ''); setDatosTarjeta({ ...datosTarjeta, numero: v.match(/.{1,4}/g)?.join(' ') || v })}} placeholder="1234 5678 9012 3456" maxLength={19} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
-                <div><label className="block text-sm font-medium text-slate-700 mb-2">Titular</label><input type="text" value={datosTarjeta.titular} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, titular: e.target.value })} placeholder="Juan Pérez" className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="block text-sm font-medium text-slate-700 mb-2">Vencimiento</label><input type="text" value={datosTarjeta.expiracion} onChange={(e) => { let v = e.target.value.replace(/\D/g, ''); if (v.length >= 2) v = v.slice(0, 2) + '/' + v.slice(2, 4); setDatosTarjeta({ ...datosTarjeta, expiracion: v })}} placeholder="MM/AA" maxLength={5} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
-                  <div><label className="block text-sm font-medium text-slate-700 mb-2">CVV</label><input type="text" value={datosTarjeta.cvv} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, cvv: e.target.value.replace(/\D/g, '') })} placeholder="123" maxLength={3} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
-                </div>
-              </div>
-            )}
-            {metodoPago === 'efectivo' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 text-blue-800">El pago se realizará en recepción.</div>)}
-            {metodoPago === 'transferencia' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 text-blue-800"><p className="font-bold">Datos Bancarios:</p><p>CBU: 000000310004832</p><p>Alias: HOTEL.ELEGANCE</p></div>)}
-
-            <div className="mb-6 p-4 bg-slate-50 rounded-lg">
-              <div className="flex justify-between items-center"><span className="text-slate-700">Total a Pagar:</span><span className="text-2xl font-bold text-amber-600">${total.toLocaleString('es-ES')}</span></div>
-            </div>
-
-            <div className="flex gap-4">
-              <button onClick={() => setPaso('fechas')} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-3 rounded-lg transition-all">Volver</button>
-              <button onClick={procesarReserva} disabled={loading} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50">
-                {loading ? <div className="flex items-center justify-center gap-2"><Loader2 className="animate-spin h-5 w-5"/> Procesando...</div> : 'Confirmar Reserva'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Paso 3: Confirmación */}
-        {paso === 'confirmacion' && (
-          <div className="bg-white rounded-xl p-8 shadow-lg text-center">
-            <CheckCircle className="h-16 w-16 text-green-600 mx-auto mb-4" />
-            <h2 className="text-3xl font-bold text-green-600 mb-4">¡Reserva Confirmada!</h2>
-            <p className="text-slate-600 mb-6">Tu reserva ha sido procesada exitosamente. Te hemos enviado un email con los detalles.</p>
-            <div className="bg-slate-50 rounded-lg p-6 mb-6 text-left">
-              <h3 className="font-bold mb-3">Detalles</h3>
-              <div className="space-y-2 text-sm text-slate-700">
-                <p><strong>Habitación:</strong> {habitacion.numero} - {habitacion.tipo}</p>
-                <p><strong>Entrada:</strong> {new Date(fechaEntrada).toLocaleDateString('es-ES')}</p>
-                <p><strong>Salida:</strong> {new Date(fechaSalida).toLocaleDateString('es-ES')}</p>
-                <p className="text-lg font-bold text-amber-600 mt-3">Total: ${total.toLocaleString('es-ES')}</p>
-              </div>
-            </div>
-            <button onClick={() => navigate('/usuario/dashboard')} className="px-8 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-all">Volver al Dashboard</button>
-          </div>
-        )}
       </div>
+
+      {/* --- SECCIÓN DE SERVICIOS (ANIMADA AL SCROLLEAR) --- */}
+      <section className="py-24 bg-slate-50">
+        <div className="max-w-7xl mx-auto px-4">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+            className="text-center mb-16"
+          >
+            <span className="text-teal-600 font-bold uppercase tracking-wider text-sm">Nuestros Servicios</span>
+            <h2 className="text-4xl md:text-5xl font-serif font-bold text-slate-900 mt-2 mb-4">
+              Experiencias de Clase Mundial
+            </h2>
+            <div className="w-24 h-1 bg-teal-500 mx-auto rounded-full"/>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <ServiceCard delay={0.1} icon={<Bed className="h-8 w-8" />} title="Suites de Lujo" desc="Descanso garantizado en espacios diseñados para tu confort." />
+            <ServiceCard delay={0.2} icon={<Utensils className="h-8 w-8" />} title="Gastronomía" desc="Sabores locales fusionados con alta cocina internacional." />
+            <ServiceCard delay={0.3} icon={<Waves className="h-8 w-8" />} title="Spa & Relax" desc="Renueva tu energía con nuestros tratamientos exclusivos." />
+            <ServiceCard delay={0.4} icon={<Dumbbell className="h-8 w-8" />} title="Fitness" desc="Mantente en forma con equipamiento de última generación." />
+          </div>
+        </div>
+      </section>
+
+      {/* --- SECCIÓN DE HABITACIONES (PARALLAX FEEL) --- */}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex flex-col md:flex-row justify-between items-end mb-12">
+            <div className="max-w-2xl">
+              <h2 className="text-4xl md:text-5xl font-serif font-bold text-slate-900 mb-4">
+                Elegancia en cada rincón
+              </h2>
+              <p className="text-lg text-slate-600">
+                Cada una de nuestras habitaciones ha sido decorada meticulosamente para ofrecer un ambiente de paz y sofisticación.
+              </p>
+            </div>
+            <Link to="/register" className="hidden md:flex items-center gap-2 text-teal-600 font-bold hover:text-teal-800 transition-colors mt-4 md:mt-0">
+              Ver todas las opciones <ArrowRight className="h-5 w-5" />
+            </Link>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            <RoomCard image="/images/rooms/room-1.jpg" title="Habitación Simple" price="$40,000" delay={0.1} />
+            <RoomCard image="/images/rooms/room-2.jpg" title="Habitación Doble" price="$60,000" delay={0.2} featured />
+            <RoomCard image="/images/rooms/suite.jpg" title="Suite Panorama" price="$120,000" delay={0.3} />
+          </div>
+        </div>
+      </section>
+
+      {/* --- UBICACIÓN (MAPA) --- */}
+      <section className="py-0 grid md:grid-cols-2 bg-slate-900 text-white">
+        <div className="p-12 md:p-24 flex flex-col justify-center">
+          <div className="inline-flex items-center gap-2 text-teal-400 mb-4">
+            <MapPin className="h-5 w-5" />
+            <span className="uppercase tracking-wider font-bold text-sm">Ubicación Privilegiada</span>
+          </div>
+          <h2 className="text-4xl font-serif font-bold mb-8">En el corazón de la belleza</h2>
+          <div className="space-y-6 text-slate-300">
+            <div className="flex gap-4">
+              <div className="bg-white/10 p-3 rounded-lg h-fit"><MapPin className="h-6 w-6 text-teal-400" /></div>
+              <div>
+                <h4 className="text-white font-bold text-lg">Dirección</h4>
+                <p>Av. San Martín 1234, Salta, Argentina</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="bg-white/10 p-3 rounded-lg h-fit"><Phone className="h-6 w-6 text-teal-400" /></div>
+              <div>
+                <h4 className="text-white font-bold text-lg">Llámanos</h4>
+                <p>+54 387 123 4567</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="bg-white/10 p-3 rounded-lg h-fit"><Mail className="h-6 w-6 text-teal-400" /></div>
+              <div>
+                <h4 className="text-white font-bold text-lg">Escríbenos</h4>
+                <p>reservas@horizontesuites.com</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="h-[500px] md:h-auto w-full grayscale hover:grayscale-0 transition-all duration-700">
+          <iframe 
+            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3622.149539663036!2d-65.4127572244862!3d-24.790282477975206!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x941bc3a3514d8f19%3A0x64727314d239c03!2sPlaza%209%20de%20Julio!5e0!3m2!1ses!2sar!4v1709234567890!5m2!1ses!2sar" 
+            width="100%" 
+            height="100%" 
+            style={{ border: 0 }} 
+            allowFullScreen={true} 
+            loading="lazy" 
+            title="Mapa del Hotel"
+          ></iframe>
+        </div>
+      </section>
+
+      {/* --- CTA FINAL --- */}
+      <section className="py-24 bg-teal-900 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+        <div className="max-w-4xl mx-auto text-center px-4 relative z-10">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            whileInView={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.5 }}
+          >
+            <Sparkles className="h-12 w-12 text-amber-400 mx-auto mb-6" />
+            <h2 className="text-4xl md:text-6xl font-serif font-bold text-white mb-6">
+              Tu historia comienza aquí
+            </h2>
+            <p className="text-xl text-teal-100 mb-10 font-light">
+              Únete a nuestro club exclusivo y recibe beneficios únicos desde tu primera reserva.
+            </p>
+            <Link
+              to="/register"
+              className="inline-block px-10 py-5 bg-white text-teal-900 font-bold rounded-full shadow-2xl hover:shadow-white/20 hover:scale-105 transition-all duration-300"
+            >
+              Comenzar Experiencia
+            </Link>
+          </motion.div>
+        </div>
+      </section>
     </div>
   )
 }
+
+// --- Componentes Auxiliares con Animación ---
+
+const ServiceCard = ({ icon, title, desc, delay }: any) => (
+  <motion.div 
+    initial={{ opacity: 0, y: 30 }}
+    whileInView={{ opacity: 1, y: 0 }}
+    viewport={{ once: true }}
+    transition={{ duration: 0.5, delay }}
+    className="bg-white p-8 rounded-2xl shadow-lg border border-slate-100 hover:shadow-2xl hover:-translate-y-2 transition-all duration-300"
+  >
+    <div className="w-14 h-14 bg-teal-50 rounded-xl flex items-center justify-center text-teal-600 mb-6">
+      {icon}
+    </div>
+    <h3 className="text-xl font-bold text-slate-900 mb-3">{title}</h3>
+    <p className="text-slate-600 leading-relaxed">{desc}</p>
+  </motion.div>
+)
+
+const RoomCard = ({ image, title, price, delay, featured }: any) => (
+  <motion.div 
+    initial={{ opacity: 0, scale: 0.95 }}
+    whileInView={{ opacity: 1, scale: 1 }}
+    viewport={{ once: true }}
+    transition={{ duration: 0.5, delay }}
+    className={`group relative rounded-2xl overflow-hidden shadow-xl ${featured ? 'md:-mt-8 md:mb-8 ring-4 ring-teal-500/20' : ''}`}
+  >
+    <div className="aspect-[3/4] overflow-hidden">
+      <img src={image} alt={title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+    </div>
+    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-90" />
+    <div className="absolute bottom-0 left-0 p-6 w-full transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300">
+      <div className="flex gap-1 text-amber-400 mb-2">
+        <Star className="h-4 w-4 fill-current" /><Star className="h-4 w-4 fill-current" /><Star className="h-4 w-4 fill-current" /><Star className="h-4 w-4 fill-current" /><Star className="h-4 w-4 fill-current" />
+      </div>
+      <h3 className="text-2xl font-serif font-bold text-white mb-2">{title}</h3>
+      <div className="flex items-center justify-between">
+        <p className="text-white/90 font-medium">{price} <span className="text-xs opacity-70">/ noche</span></p>
+        <span className="bg-white text-teal-900 text-xs font-bold px-4 py-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          Ver Detalles
+        </span>
+      </div>
+    </div>
+  </motion.div>
+)
