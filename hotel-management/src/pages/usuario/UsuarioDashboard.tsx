@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion, Servicio, Reserva } from '@/types'
-import { Calendar, Users, Clock, CheckCircle, XCircle, Mail, Edit, AlertCircle, Send, RefreshCw, Info, X } from 'lucide-react'
+import { Calendar, Users, Clock, CheckCircle, XCircle, Mail, Edit, AlertCircle, Send, RefreshCw, Info, X, Filter } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 export const UsuarioDashboard = () => {
