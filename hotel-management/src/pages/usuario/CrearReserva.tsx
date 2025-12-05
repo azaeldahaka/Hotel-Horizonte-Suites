@@ -351,10 +351,3 @@ export const CrearReserva = () => {
     </div>
   )
 }
-```
-
-**¡Ahora sí!** Probá hacer una reserva.
-1.  Deberías poder elegir la fecha de hoy.
-2.  Debería pasar el pago.
-3.  Deberías ver en la consola: "Intentando enviar email..." y luego "✅ Email enviado con éxito.".
-4.  Y deberías recibir el correo en tu Gmail (siempre que el usuario registrado tenga un email real).
