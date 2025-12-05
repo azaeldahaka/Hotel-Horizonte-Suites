@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion, Usuario, Reserva, TipoHabitacion, Amenidad, Servicio } from '@/types'
-// Usamos Shield para evitar el error de 'Lock'
-import { Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield } from 'lucide-react'
+import { Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, Loader2 } from 'lucide-react'
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -15,7 +14,9 @@ import {
   Legend,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  BarChart,
+  Bar
 } from 'recharts'
 
 export const AdminDashboard = () => {
@@ -37,18 +38,16 @@ export const AdminDashboard = () => {
   }, [])
 
   const cargarDatos = async () => {
-    setLoading(true);
+    if (habitaciones.length === 0) setLoading(true);
     try {
-      const habPromise = supabase.from('habitaciones').select('*').order('numero')
-      const opPromise = supabase.from('usuarios').select('*').eq('rol', 'operador').order('nombre')
-      const cliPromise = supabase.from('usuarios').select('*').eq('rol', 'usuario').order('nombre')
-      const resPromise = supabase.from('reservas').select('*').order('fecha_reserva', { ascending: false }) 
-      const servPromise = supabase.from('servicios').select('*').order('nombre')
-      const tiposPromise = supabase.from('tipos_habitacion').select('*').order('nombre')
-      const amenidadesPromise = supabase.from('amenidades').select('*').order('nombre')
-
       const [habResult, opResult, resResult, cliResult, servResult, tiposResult, amenidadesResult] = await Promise.all([
-        habPromise, opPromise, resPromise, cliPromise, servPromise, tiposPromise, amenidadesPromise
+        supabase.from('habitaciones').select('*').order('numero'),
+        supabase.from('usuarios').select('*').eq('rol', 'operador').order('nombre'),
+        supabase.from('reservas').select('*').order('fecha_reserva', { ascending: false }),
+        supabase.from('usuarios').select('id, nombre, email, rol').eq('rol', 'usuario'),
+        supabase.from('servicios').select('*').order('nombre'),
+        supabase.from('tipos_habitacion').select('*').order('nombre'),
+        supabase.from('amenidades').select('*').order('nombre')
       ]);
       
       setHabitaciones(habResult.data || [])
@@ -78,64 +77,199 @@ export const AdminDashboard = () => {
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">
-            Panel de Administrador
-          </h1>
-          <p className="text-slate-600">Gestión completa del hotel</p>
+          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Panel de Administrador</h1>
+          <p className="text-slate-600">Gestión integral de Horizonte Suites</p>
         </div>
 
-        {/* --- AQUÍ ESTÁ EL ARREGLO PARA CELULAR (flex-wrap) --- */}
-        <div className="flex flex-wrap gap-2 mb-8 border-b border-slate-200 pb-1">
-          <button onClick={() => setActiveTab('habitaciones')} className={`px-3 py-2 text-sm md:text-base font-medium flex items-center gap-2 rounded-t-lg transition-colors ${activeTab === 'habitaciones' ? 'bg-white text-teal-600 border-b-2 border-teal-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Home className="h-4 w-4" /> Habitaciones
-          </button>
-          <button onClick={() => setActiveTab('servicios')} className={`px-3 py-2 text-sm md:text-base font-medium flex items-center gap-2 rounded-t-lg transition-colors ${activeTab === 'servicios' ? 'bg-white text-teal-600 border-b-2 border-teal-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Coffee className="h-4 w-4" /> Servicios
-          </button>
-          <button onClick={() => setActiveTab('reservas')} className={`px-3 py-2 text-sm md:text-base font-medium flex items-center gap-2 rounded-t-lg transition-colors ${activeTab === 'reservas' ? 'bg-white text-teal-600 border-b-2 border-teal-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Calendar className="h-4 w-4" /> Reservas
-          </button>
-          <button onClick={() => setActiveTab('operadores')} className={`px-3 py-2 text-sm md:text-base font-medium flex items-center gap-2 rounded-t-lg transition-colors ${activeTab === 'operadores' ? 'bg-white text-teal-600 border-b-2 border-teal-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <Users className="h-4 w-4" /> Operadores
-          </button>
-          <button onClick={() => setActiveTab('estadisticas')} className={`px-3 py-2 text-sm md:text-base font-medium flex items-center gap-2 rounded-t-lg transition-colors ${activeTab === 'estadisticas' ? 'bg-white text-teal-600 border-b-2 border-teal-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-            <BarChart3 className="h-4 w-4" /> Estadísticas
-          </button>
+        <div className="flex flex-wrap gap-2 mb-8 border-b border-slate-200 pb-1 overflow-x-auto">
+          {[
+            { id: 'habitaciones', icon: Home, label: 'Habitaciones' },
+            { id: 'servicios', icon: Coffee, label: 'Servicios' },
+            { id: 'reservas', icon: Calendar, label: 'Reservas' },
+            { id: 'operadores', icon: Users, label: 'Operadores' },
+            { id: 'estadisticas', icon: BarChart3, label: 'Estadísticas' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`px-4 py-3 text-sm font-medium flex items-center gap-2 rounded-t-lg transition-all border-b-2 whitespace-nowrap ${
+                activeTab === tab.id 
+                  ? 'bg-white text-teal-700 border-teal-600 shadow-sm' 
+                  : 'text-slate-500 border-transparent hover:text-teal-600 hover:bg-slate-100'
+              }`}
+            >
+              <tab.icon className="h-4 w-4" /> {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* Contenido */}
-        {activeTab === 'habitaciones' && (
-          <GestionHabitaciones 
-            habitaciones={habitaciones} 
-            tipos={tiposHabitacion}
-            amenidadesDisponibles={amenidades}
-            onRecargar={cargarDatos} 
-          />
-        )}
-        {activeTab === 'servicios' && (
-          <GestionServicios 
-            servicios={servicios} 
-            onRecargar={cargarDatos} 
-          />
-        )}
-        {activeTab === 'reservas' && (
-          <GestionReservas 
-            reservas={reservas} 
-            habitaciones={habitaciones}
-            clientes={clientes} 
-            onRecargar={cargarDatos}
-          />
-        )}
-        {activeTab === 'operadores' && (
-          <GestionOperadores operadores={operadores} onRecargar={cargarDatos} />
-        )}
-        {activeTab === 'estadisticas' && (
-          <Estadisticas habitaciones={habitaciones} reservas={reservas} />
-        )}
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {activeTab === 'habitaciones' && <GestionHabitaciones habitaciones={habitaciones} tipos={tiposHabitacion} amenidadesDisponibles={amenidades} onRecargar={cargarDatos} />}
+          {activeTab === 'servicios' && <GestionServicios servicios={servicios} onRecargar={cargarDatos} />}
+          {activeTab === 'reservas' && <GestionReservas reservas={reservas} habitaciones={habitaciones} clientes={clientes} onRecargar={cargarDatos} />}
+          {activeTab === 'operadores' && <GestionOperadores operadores={operadores} onRecargar={cargarDatos} />}
+          {activeTab === 'estadisticas' && <Estadisticas habitaciones={habitaciones} reservas={reservas} />}
+        </div>
       </div>
     </div>
   )
 }
+
+// --- ESTADÍSTICAS (ARREGLADO) ---
+const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: any[] }) => {
+  const ingresosCompletadas = reservas.filter(r => r.estado === 'completada').reduce((sum, r) => sum + r.total, 0)
+  const ingresosPendientes = reservas.filter(r => r.estado === 'activa').reduce((sum, r) => sum + r.total, 0)
+  const reservasActivas = reservas.filter(r => r.estado === 'activa').length
+  const totalHabitaciones = habitaciones.length
+  const habitacionesDisponibles = habitaciones.filter(h => h.estado === 'disponible').length
+
+  // Datos para el gráfico de líneas
+  const getIngresosPorMes = () => {
+    const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const data = meses.map((mes, idx) => {
+      // Importante: getMonth() devuelve 0-11. Comprobamos que la fecha sea válida.
+      const totalMes = reservas
+        .filter(r => {
+           const d = new Date(r.fecha_reserva);
+           return !isNaN(d.getTime()) && r.estado === 'completada' && d.getMonth() === idx;
+        })
+        .reduce((acc, r) => acc + r.total, 0);
+      return { name: mes, Ingresos: totalMes };
+    });
+    return data;
+  };
+  const dataIngresos = getIngresosPorMes();
+
+  // Datos para el gráfico de torta
+  const getReservasPorTipo = () => {
+    const tipos = reservas.reduce((acc: any, r: any) => {
+      const habitacion = habitaciones.find(h => h.id === r.habitacion_id);
+      if (habitacion) {
+        acc[habitacion.tipo] = (acc[habitacion.tipo] || 0) + 1;
+      }
+      return acc;
+    }, {});
+    
+    return Object.entries(tipos).map(([name, value]) => ({ name, value }));
+  };
+  const dataTipos = getReservasPorTipo();
+  const COLORS = ['#0F766E', '#2DD4BF', '#F59E0B', '#EF4444', '#6366F1', '#8B5CF6'];
+
+  return (
+    <div className="space-y-8 pb-10">
+      {/* KPIs Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Ingresos Totales</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">${ingresosCompletadas.toLocaleString()}</h3>
+            </div>
+            <div className="p-2 bg-teal-50 text-teal-600 rounded-lg group-hover:bg-teal-100 transition-colors"><DollarSign className="h-5 w-5"/></div>
+          </div>
+          <div className="mt-4 flex items-center text-xs text-slate-500">
+            <span className="text-amber-600 font-medium mr-1">${ingresosPendientes.toLocaleString()}</span> pendientes de cobro
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Ocupación Actual</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{totalHabitaciones - habitacionesDisponibles}/{totalHabitaciones}</h3>
+            </div>
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors"><Home className="h-5 w-5"/></div>
+          </div>
+          <div className="mt-4 w-full bg-slate-100 rounded-full h-1.5">
+            <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${((totalHabitaciones - habitacionesDisponibles) / totalHabitaciones) * 100}%` }}></div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Reservas Activas</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{reservasActivas}</h3>
+            </div>
+            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg group-hover:bg-amber-100 transition-colors"><Calendar className="h-5 w-5"/></div>
+          </div>
+          <p className="mt-4 text-xs text-slate-500">Reservas en curso o futuras</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Disponibilidad</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{habitacionesDisponibles}</h3>
+            </div>
+            <div className="p-2 bg-green-50 text-green-600 rounded-lg group-hover:bg-green-100 transition-colors"><CheckCircle className="h-5 w-5"/></div>
+          </div>
+          <p className="mt-4 text-xs text-slate-500">Habitaciones libres hoy</p>
+        </div>
+      </div>
+
+      {/* GRÁFICOS - El arreglo clave es el contenedor con altura fija */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Gráfico 1: Ingresos */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-teal-600" /> Evolución de Ingresos
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataIngresos}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+                <Tooltip 
+                  cursor={{ fill: '#f1f5f9' }}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                />
+                <Bar dataKey="Ingresos" fill="#0F766E" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Gráfico 2: Tipos de Habitación */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <PieChart className="h-5 w-5 text-teal-600" /> Preferencias de Clientes
+          </h3>
+          <div className="h-[300px] w-full">
+            {dataTipos.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={dataTipos}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {dataTipos.map((entry:any, index:number) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-400">
+                No hay datos suficientes
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 // --- GESTIÓN DE SERVICIOS ---
 const GestionServicios = ({ servicios, onRecargar }: { servicios: Servicio[], onRecargar: () => void }) => {
@@ -502,38 +636,3 @@ const ModalEditarOperador = ({ operador, onClose, onSave }: any) => {
   )
 }
 
-const Estadisticas = ({ habitaciones, reservas }: any) => {
-  const ingresosCompletadas = reservas.filter((r:any) => r.estado === 'completada').reduce((sum:number, r:any) => sum + r.total, 0)
-  const reservasActivas = reservas.filter((r:any) => r.estado === 'activa').length
-  const habitacionesDisponibles = habitaciones.filter((h:any) => h.estado === 'disponible').length
-  const totalHabitaciones = habitaciones.length
-
-  const getIngresosPorMes = () => {
-    const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-    const ingresos = reservas.filter((r:any) => r.estado === 'completada').reduce((acc:any, r:any) => { const mes = new Date(r.fecha_reserva).getMonth(); const nombreMes = meses[mes]; acc[nombreMes] = (acc[nombreMes] || 0) + r.total; return acc; }, {} as Record<string, number>);
-    return meses.map(mes => ({ name: mes, Ingresos: ingresos[mes] || 0 }));
-  };
-  const dataIngresos = getIngresosPorMes();
-
-  const getReservasPorTipo = () => {
-    const tipos = reservas.reduce((acc:any, r:any) => { const h = habitaciones.find((hab:any) => hab.id === r.habitacion_id); if(h) acc[h.tipo] = (acc[h.tipo] || 0) + 1; return acc; }, {} as Record<string, number>);
-    return Object.entries(tipos).map(([name, value]) => ({ name, value }));
-  };
-  const dataTipos = getReservasPorTipo();
-  const COLORS = ['#FFBB28', '#FF8042', '#0088FE', '#00C49F', '#82ca9d', '#8884d8'];
-
-  return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200"><p className="text-slate-600 text-sm font-medium">Total Habitaciones</p><p className="text-3xl font-bold text-slate-900">{totalHabitaciones}</p></div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-green-200 bg-green-50"><p className="text-green-700 text-sm font-medium">Disponibles</p><p className="text-3xl font-bold text-green-900">{habitacionesDisponibles}</p></div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-teal-200 bg-teal-50"><p className="text-teal-700 text-sm font-medium">Reservas Activas</p><p className="text-3xl font-bold text-teal-900">{reservasActivas}</p></div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-200 bg-blue-50"><p className="text-blue-700 text-sm font-medium">Ingresos</p><p className="text-2xl font-bold text-blue-900">${ingresosCompletadas.toLocaleString('es-ES')}</p></div>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200"><h3 className="font-bold mb-4 text-lg text-slate-900">Ingresos Mensuales</h3><div style={{width:'100%',height:300}}><ResponsiveContainer><LineChart data={dataIngresos} margin={{top:5,right:20,left:-20,bottom:5}}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name" stroke="#64748b"/><YAxis stroke="#64748b"/><Tooltip formatter={(value: number) => `$${value.toLocaleString('es-ES')}`}/><Line type="monotone" dataKey="Ingresos" stroke="#0F172A" strokeWidth={3} dot={{r:4}} activeDot={{r:8}}/></LineChart></ResponsiveContainer></div></div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200"><h3 className="font-bold mb-4 text-lg text-slate-900">Popularidad</h3><div style={{width:'100%',height:300}}><ResponsiveContainer><PieChart><Pie data={dataTipos} cx="50%" cy="50%" outerRadius={100} fill="#8884d8" dataKey="value" label={({name,percent})=>percent>0.05?`${name} (${(percent*100).toFixed(0)}%)`:''}>{dataTipos.map((entry:any, index:number) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip formatter={(value: number) => `${value} reservas`}/></PieChart></ResponsiveContainer></div></div>
-      </div>
-    </div>
-  )
-}
