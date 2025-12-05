@@ -3,15 +3,13 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion } from '@/types'
-import { Calendar, Users, CreditCard, AlertCircle, CheckCircle } from 'lucide-react'
+import { Calendar, Users, CreditCard, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
 
-// --- ¡NUEVA FUNCIÓN! ---
-// Devuelve la fecha local de "hoy" en formato YYYY-MM-DD
-// Esto evita el bug de la zona horaria UTC de .toISOString()
+// Función auxiliar para fechas locales
 const getTodayLocalString = () => {
   const hoy = new Date();
   const y = hoy.getFullYear();
-  const m = (hoy.getMonth() + 1).toString().padStart(2, '0'); // Meses son 0-11
+  const m = (hoy.getMonth() + 1).toString().padStart(2, '0');
   const d = hoy.getDate().toString().padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
@@ -37,17 +35,13 @@ export const CrearReserva = () => {
   const [loading, setLoading] = useState(false)
   const [total, setTotal] = useState(0)
 
-  // --- ¡NUEVA FUNCIÓN! ---
-  // Calcula la fecha mínima para el check-out (1 día después de la entrada)
+  // Fecha mínima de salida (+1 día)
   const getMinFechaSalida = () => {
     if (!fechaEntrada) return getTodayLocalString();
     try {
       const [y, m, d] = fechaEntrada.split('-').map(Number);
-      // Creamos la fecha de entrada en hora local
       const entradaDate = new Date(y, m - 1, d);
-      // Le sumamos un día
       entradaDate.setDate(entradaDate.getDate() + 1);
-      // La convertimos a string YYYY-MM-DD
       const yS = entradaDate.getFullYear();
       const mS = (entradaDate.getMonth() + 1).toString().padStart(2, '0');
       const dS = entradaDate.getDate().toString().padStart(2, '0');
@@ -56,7 +50,6 @@ export const CrearReserva = () => {
       return getTodayLocalString();
     }
   }
-
 
   useEffect(() => {
     if (id && !authLoading) { 
@@ -76,9 +69,7 @@ export const CrearReserva = () => {
         .eq('id', id)
         .maybeSingle()
       
-      if (data) {
-        setHabitacion(data)
-      }
+      if (data) setHabitacion(data)
     } catch (error) {
       console.error('Error cargando habitación:', error)
     }
@@ -86,10 +77,8 @@ export const CrearReserva = () => {
 
   const calcularTotal = () => {
     if (fechaEntrada && fechaSalida && habitacion?.precio_noche) {
-      // --- CAMBIO: Parseo de fecha local ---
       const [yE, mE, dE] = fechaEntrada.split('-').map(Number)
       const entrada = new Date(yE, mE - 1, dE)
-      
       const [yS, mS, dS] = fechaSalida.split('-').map(Number)
       const salida = new Date(yS, mS - 1, dS)
       
@@ -105,33 +94,19 @@ export const CrearReserva = () => {
     setLoading(true)
 
     try {
-      // --- ¡AQUÍ ESTÁ EL ARREGLO PRINCIPAL! ---
-      // 1. Obtenemos 'hoy' a medianoche (hora local)
       const hoy = new Date()
       hoy.setHours(0, 0, 0, 0)
 
-      // 2. Parseamos las fechas de los inputs (string) a objetos Date (hora local)
       const [yE, mE, dE] = fechaEntrada.split('-').map(Number)
       const entrada = new Date(yE, mE - 1, dE)
 
       const [yS, mS, dS] = fechaSalida.split('-').map(Number)
       const salida = new Date(yS, mS - 1, dS)
-      // --- FIN DEL ARREGLO ---
 
-      // Esta validación ahora compara manzanas con manzanas (local vs local)
-      if (entrada < hoy) {
-        throw new Error('La fecha de entrada no puede ser anterior a hoy')
-      }
+      if (entrada < hoy) throw new Error('La fecha de entrada no puede ser anterior a hoy')
+      if (salida <= entrada) throw new Error('La fecha de salida debe ser posterior a la fecha de entrada')
+      if (numHuespedes < 1 || numHuespedes > (habitacion?.capacidad || 1)) throw new Error(`El número de huéspedes debe estar entre 1 y ${habitacion?.capacidad}`)
 
-      if (salida <= entrada) {
-        throw new Error('La fecha de salida debe ser posterior a la fecha de entrada')
-      }
-
-      if (numHuespedes < 1 || numHuespedes > (habitacion?.capacidad || 1)) {
-        throw new Error(`El número de huéspedes debe estar entre 1 y ${habitacion?.capacidad}`)
-      }
-
-      // Verificar disponibilidad (esto no cambia)
       const { data } = await supabase.functions.invoke('check-room-availability', {
         body: {
           habitacion_id: id,
@@ -141,9 +116,7 @@ export const CrearReserva = () => {
       })
 
       const responseData = data?.data || data
-      if (!responseData?.available) {
-        throw new Error('La habitación no está disponible para estas fechas')
-      }
+      if (!responseData?.available) throw new Error('La habitación no está disponible para estas fechas')
 
       setPaso('pago')
     } catch (err: any) {
@@ -154,7 +127,6 @@ export const CrearReserva = () => {
   }
 
   const procesarReserva = async () => {
-    // ... (Esta función no necesita cambios, ya funciona bien) ...
     setError('')
     setLoading(true)
     try {
@@ -162,13 +134,11 @@ export const CrearReserva = () => {
         if (!datosTarjeta.numero || !datosTarjeta.titular || !datosTarjeta.expiracion || !datosTarjeta.cvv) {
           throw new Error('Completa todos los datos de la tarjeta')
         }
-        if (datosTarjeta.numero.replace(/\s/g, '').length !== 16) {
-          throw new Error('El número de tarjeta debe tener 16 dígitos')
-        }
-        if (datosTarjeta.cvv.length !== 3) {
-          throw new Error('El CVV debe tener 3 dígitos')
-        }
+        if (datosTarjeta.numero.replace(/\s/g, '').length !== 16) throw new Error('El número de tarjeta debe tener 16 dígitos')
+        if (datosTarjeta.cvv.length !== 3) throw new Error('El CVV debe tener 3 dígitos')
       }
+
+      // 1. Insertar Reserva
       const { data: reservaData, error: reservaError } = await supabase
         .from('reservas')
         .insert([{
@@ -181,9 +151,14 @@ export const CrearReserva = () => {
           total: total
         }])
         .select()
+
       if (reservaError) throw reservaError
       const reservaId = reservaData[0]?.id
-      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // Simular espera
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
+      // 2. Registrar Pago
       const { error: pagoError } = await supabase
         .from('pagos')
         .insert([{
@@ -192,13 +167,44 @@ export const CrearReserva = () => {
           metodo_pago: metodoPago,
           estado: 'completado'
         }])
+
       if (pagoError) throw pagoError
+
+      // 3. Actualizar Habitación
       await supabase
         .from('habitaciones')
         .update({ estado: 'ocupada' })
         .eq('id', id)
+
+      // --- 4. ENVIAR EMAIL (¡RESTAURADO!) ---
+      console.log("Intentando enviar email de confirmación...");
+      const { error: emailError } = await supabase.functions.invoke('send-email', {
+        body: {
+          email: user?.email,
+          nombre: user?.nombre,
+          reserva: {
+            id: reservaId,
+            habitacion_numero: habitacion?.numero,
+            habitacion_tipo: habitacion?.tipo,
+            fecha_entrada: new Date(fechaEntrada).toLocaleDateString('es-ES'),
+            fecha_salida: new Date(fechaSalida).toLocaleDateString('es-ES'),
+            num_huespedes: numHuespedes,
+            total: total.toLocaleString('es-ES')
+          }
+        }
+      });
+
+      if (emailError) {
+        console.error("❌ Error enviando email:", emailError);
+      } else {
+        console.log("✅ Email enviado con éxito.");
+      }
+      // --------------------------------------
+
       setPaso('confirmacion')
+
     } catch (err: any) {
+      console.error(err);
       setError(err.message || 'Error al procesar la reserva')
     } finally {
       setLoading(false)
@@ -207,7 +213,7 @@ export const CrearReserva = () => {
 
   if (authLoading || !habitacion) { 
     return <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-teal-600"></div>
+      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-amber-600"></div>
     </div>
   }
 
@@ -216,21 +222,19 @@ export const CrearReserva = () => {
       <div className="max-w-4xl mx-auto px-4">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">
-            Reservar Habitación {habitacion.numero}
-          </h1>
+          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Reservar Habitación {habitacion.numero}</h1>
           <p className="text-slate-600">{habitacion.tipo}</p>
         </div>
 
         {/* Pasos */}
         <div className="flex items-center justify-center mb-8">
-          <div className={`flex items-center ${paso === 'fechas' ? 'text-teal-600' : 'text-green-600'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'fechas' ? 'bg-teal-600' : 'bg-green-600'} text-white font-bold`}>1</div>
+          <div className={`flex items-center ${paso === 'fechas' ? 'text-amber-600' : 'text-green-600'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'fechas' ? 'bg-amber-600' : 'bg-green-600'} text-white font-bold`}>1</div>
             <span className="ml-2 font-medium">Fechas</span>
           </div>
           <div className="w-24 h-1 bg-slate-300 mx-4"></div>
-          <div className={`flex items-center ${paso === 'pago' ? 'text-teal-600' : paso === 'confirmacion' ? 'text-green-600' : 'text-slate-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'pago' ? 'bg-teal-600' : paso === 'confirmacion' ? 'bg-green-600' : 'bg-slate-300'} text-white font-bold`}>2</div>
+          <div className={`flex items-center ${paso === 'pago' ? 'text-amber-600' : paso === 'confirmacion' ? 'text-green-600' : 'text-slate-400'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${paso === 'pago' ? 'bg-amber-600' : paso === 'confirmacion' ? 'bg-green-600' : 'bg-slate-300'} text-white font-bold`}>2</div>
             <span className="ml-2 font-medium">Pago</span>
           </div>
           <div className="w-24 h-1 bg-slate-300 mx-4"></div>
@@ -253,82 +257,32 @@ export const CrearReserva = () => {
             <h2 className="text-2xl font-bold mb-6">Selecciona las Fechas</h2>
             <div className="grid md:grid-cols-2 gap-6 mb-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  <Calendar className="inline h-4 w-4 mr-2" />
-                  Fecha de Entrada
-                </label>
-                <input
-                  type="date"
-                  value={fechaEntrada}
-                  onChange={(e) => {
-                    setFechaEntrada(e.target.value)
-                    // Si la fecha de salida es anterior a la nueva fecha de entrada, la reseteamos
-                    if(fechaSalida && e.target.value >= fechaSalida) {
-                      setFechaSalida('')
-                    }
-                  }}
-                  // --- CAMBIO: Usamos la fecha local ---
-                  min={getTodayLocalString()}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none"
-                  required
-                />
+                <label className="block text-sm font-medium text-slate-700 mb-2"><Calendar className="inline h-4 w-4 mr-2" />Fecha de Entrada</label>
+                <input type="date" value={fechaEntrada} onChange={(e) => { setFechaEntrada(e.target.value); if(fechaSalida && e.target.value >= fechaSalida) setFechaSalida('') }} min={getTodayLocalString()} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" required />
               </div>
-              
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  <Calendar className="inline h-4 w-4 mr-2" />
-                  Fecha de Salida
-                </label>
-                <input
-                  type="date"
-                  value={fechaSalida}
-                  onChange={(e) => setFechaSalida(e.target.value)}
-                  // --- CAMBIO: Usamos la función para +1 día ---
-                  min={getMinFechaSalida()}
-                  // Deshabilitado si no hay fecha de entrada
-                  disabled={!fechaEntrada} 
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none disabled:bg-slate-50"
-                  required
-                />
+                <label className="block text-sm font-medium text-slate-700 mb-2"><Calendar className="inline h-4 w-4 mr-2" />Fecha de Salida</label>
+                <input type="date" value={fechaSalida} onChange={(e) => setFechaSalida(e.target.value)} min={getMinFechaSalida()} disabled={!fechaEntrada} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none disabled:bg-slate-50" required />
               </div>
             </div>
 
             <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                <Users className="inline h-4 w-4 mr-2" />
-                Número de Huéspedes
-              </label>
-              <input
-                type="number"
-                value={numHuespedes}
-                onChange={(e) => setNumHuespedes(parseInt(e.target.value))}
-                min="1"
-                max={habitacion.capacidad}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none"
-                required
-              />
-              <p className="text-sm text-slate-500 mt-1">
-                Capacidad máxima: {habitacion.capacidad} personas
-              </p>
+              <label className="block text-sm font-medium text-slate-700 mb-2"><Users className="inline h-4 w-4 mr-2" />Número de Huéspedes</label>
+              <input type="number" value={numHuespedes} onChange={(e) => setNumHuespedes(parseInt(e.target.value))} min="1" max={habitacion.capacidad} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" required />
+              <p className="text-sm text-slate-500 mt-1">Capacidad máxima: {habitacion.capacidad} personas</p>
             </div>
 
             {total > 0 && (
-              <div className="mb-6 p-4 bg-teal-50 rounded-lg border border-teal-200">
+              <div className="mb-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-700">Total a Pagar:</span>
-                  <span className="text-2xl font-bold text-teal-600">
-                    ${total.toLocaleString('es-ES')}
-                  </span>
+                  <span className="text-2xl font-bold text-amber-600">${total.toLocaleString('es-ES')}</span>
                 </div>
               </div>
             )}
 
-            <button
-              onClick={validarDisponibilidad}
-              disabled={loading || !fechaEntrada || !fechaSalida}
-              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Verificando...' : 'Continuar al Pago'}
+            <button onClick={validarDisponibilidad} disabled={loading || !fechaEntrada || !fechaSalida} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+              {loading ? <div className="flex items-center justify-center gap-2"><Loader2 className="animate-spin h-5 w-5"/> Verificando...</div> : 'Continuar al Pago'}
             </button>
           </div>
         )}
@@ -337,56 +291,39 @@ export const CrearReserva = () => {
         {paso === 'pago' && (
           <div className="bg-white rounded-xl p-8 shadow-lg">
             <h2 className="text-2xl font-bold mb-6">Información de Pago</h2>
-            {/* ... (Todo el formulario de pago, no necesita cambios) ... */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-slate-700 mb-3">Método de Pago</label>
               <div className="grid grid-cols-3 gap-4">
                 {(['tarjeta', 'efectivo', 'transferencia'] as const).map((metodo) => (
-                  <button key={metodo} onClick={() => setMetodoPago(metodo)} className={`p-4 rounded-lg border-2 transition-all ${metodoPago === metodo ? 'border-teal-600 bg-teal-50' : 'border-slate-300 hover:border-slate-400'}`}>
+                  <button key={metodo} onClick={() => setMetodoPago(metodo)} className={`p-4 rounded-lg border-2 transition-all ${metodoPago === metodo ? 'border-amber-600 bg-amber-50' : 'border-slate-300 hover:border-slate-400'}`}>
                     <CreditCard className="h-6 w-6 mx-auto mb-2" />
                     <p className="text-sm font-medium capitalize">{metodo}</p>
                   </button>
                 ))}
               </div>
             </div>
+
             {metodoPago === 'tarjeta' && (
               <div className="space-y-4 mb-6">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Número de Tarjeta</label>
-                  <input type="text" value={datosTarjeta.numero} onChange={(e) => { const v = e.target.value.replace(/\s/g, '').replace(/\D/g, ''); setDatosTarjeta({ ...datosTarjeta, numero: v.match(/.{1,4}/g)?.join(' ') || v })}} placeholder="1234 5678 9012 3456" maxLength={19} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Titular de la Tarjeta</label>
-                  <input type="text" value={datosTarjeta.titular} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, titular: e.target.value })} placeholder="Juan Pérez" className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-                </div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-2">Número de Tarjeta</label><input type="text" value={datosTarjeta.numero} onChange={(e) => { const v = e.target.value.replace(/\s/g, '').replace(/\D/g, ''); setDatosTarjeta({ ...datosTarjeta, numero: v.match(/.{1,4}/g)?.join(' ') || v })}} placeholder="1234 5678 9012 3456" maxLength={19} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-2">Titular</label><input type="text" value={datosTarjeta.titular} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, titular: e.target.value })} placeholder="Juan Pérez" className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Fecha de Expiración</label>
-                    <input type="text" value={datosTarjeta.expiracion} onChange={(e) => { let v = e.target.value.replace(/\D/g, ''); if (v.length >= 2) v = v.slice(0, 2) + '/' + v.slice(2, 4); setDatosTarjeta({ ...datosTarjeta, expiracion: v })}} placeholder="MM/AA" maxLength={5} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">CVV</label>
-                    <input type="text" value={datosTarjeta.cvv} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, cvv: e.target.value.replace(/\D/g, '') })} placeholder="123" maxLength={3} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-2">Vencimiento</label><input type="text" value={datosTarjeta.expiracion} onChange={(e) => { let v = e.target.value.replace(/\D/g, ''); if (v.length >= 2) v = v.slice(0, 2) + '/' + v.slice(2, 4); setDatosTarjeta({ ...datosTarjeta, expiracion: v })}} placeholder="MM/AA" maxLength={5} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-2">CVV</label><input type="text" value={datosTarjeta.cvv} onChange={(e) => setDatosTarjeta({ ...datosTarjeta, cvv: e.target.value.replace(/\D/g, '') })} placeholder="123" maxLength={3} className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" /></div>
                 </div>
               </div>
             )}
-            {metodoPago === 'efectivo' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200"><p className="text-blue-800">El pago en efectivo se realizará al momento del check-in.</p></div>)}
-            {metodoPago === 'transferencia' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200"><p className="text-blue-800">Datos para transferencia: CBU 1234...</p></div>)}
-            <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <h3 className="font-semibold mb-2">Resumen de Reserva</h3>
-              <div className="space-y-1 text-sm text-slate-600">
-                <p>Habitación: {habitacion.numero} - {habitacion.tipo}</p>
-                <p>Entrada: {new Date(fechaEntrada).toLocaleDateString('es-ES')}</p>
-                <p>Salida: {new Date(fechaSalida).toLocaleDateString('es-ES')}</p>
-                <p>Huéspedes: {numHuespedes}</p>
-                <p className="text-lg font-bold text-teal-600 mt-2">Total: ${total.toLocaleString('es-ES')}</p>
-              </div>
+            {metodoPago === 'efectivo' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 text-blue-800">El pago se realizará en recepción.</div>)}
+            {metodoPago === 'transferencia' && (<div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 text-blue-800"><p className="font-bold">Datos Bancarios:</p><p>CBU: 000000310004832</p><p>Alias: HOTEL.ELEGANCE</p></div>)}
+
+            <div className="mb-6 p-4 bg-slate-50 rounded-lg">
+              <div className="flex justify-between items-center"><span className="text-slate-700">Total a Pagar:</span><span className="text-2xl font-bold text-amber-600">${total.toLocaleString('es-ES')}</span></div>
             </div>
+
             <div className="flex gap-4">
               <button onClick={() => setPaso('fechas')} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-3 rounded-lg transition-all">Volver</button>
-              <button onClick={procesarReserva} disabled={loading} className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50">
-                {loading ? 'Procesando...' : 'Confirmar Reserva'}
+              <button onClick={procesarReserva} disabled={loading} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50">
+                {loading ? <div className="flex items-center justify-center gap-2"><Loader2 className="animate-spin h-5 w-5"/> Procesando...</div> : 'Confirmar Reserva'}
               </button>
             </div>
           </div>
@@ -395,27 +332,29 @@ export const CrearReserva = () => {
         {/* Paso 3: Confirmación */}
         {paso === 'confirmacion' && (
           <div className="bg-white rounded-xl p-8 shadow-lg text-center">
-            {/* ... (Pantalla de confirmación sin cambios) ... */}
             <CheckCircle className="h-16 w-16 text-green-600 mx-auto mb-4" />
             <h2 className="text-3xl font-bold text-green-600 mb-4">¡Reserva Confirmada!</h2>
-            <p className="text-slate-600 mb-6">Tu reserva ha sido procesada exitosamente.</p>
-            <div className="bg-slate-50 rounded-lg p-6 mb-6 text-left border border-slate-200">
-              <h3 className="font-bold mb-3">Detalles de tu Reserva</h3>
+            <p className="text-slate-600 mb-6">Tu reserva ha sido procesada exitosamente. Te hemos enviado un email con los detalles.</p>
+            <div className="bg-slate-50 rounded-lg p-6 mb-6 text-left">
+              <h3 className="font-bold mb-3">Detalles</h3>
               <div className="space-y-2 text-sm text-slate-700">
                 <p><strong>Habitación:</strong> {habitacion.numero} - {habitacion.tipo}</p>
-                <p><strong>Check-in:</strong> {new Date(fechaEntrada).toLocaleDateString('es-ES')}</p>
-                <p><strong>Check-out:</strong> {new Date(fechaSalida).toLocaleDateString('es-ES')}</p>
-                <p><strong>Huéspedes:</strong> {numHuespedes}</p>
-                <p><strong>Método de pago:</strong> {metodoPago}</p>
-                <p className="text-lg font-bold text-teal-600 mt-3">Total pagado: ${total.toLocaleString('es-ES')}</p>
+                <p><strong>Entrada:</strong> {new Date(fechaEntrada).toLocaleDateString('es-ES')}</p>
+                <p><strong>Salida:</strong> {new Date(fechaSalida).toLocaleDateString('es-ES')}</p>
+                <p className="text-lg font-bold text-amber-600 mt-3">Total: ${total.toLocaleString('es-ES')}</p>
               </div>
             </div>
-            <button onClick={() => navigate('/usuario/dashboard')} className="px-8 py-3 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-lg transition-all">
-              Volver al Dashboard
-            </button>
+            <button onClick={() => navigate('/usuario/dashboard')} className="px-8 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-all">Volver al Dashboard</button>
           </div>
         )}
       </div>
     </div>
   )
 }
+```
+
+**¡Ahora sí!** Probá hacer una reserva.
+1.  Deberías poder elegir la fecha de hoy.
+2.  Debería pasar el pago.
+3.  Deberías ver en la consola: "Intentando enviar email..." y luego "✅ Email enviado con éxito.".
+4.  Y deberías recibir el correo en tu Gmail (siempre que el usuario registrado tenga un email real).
