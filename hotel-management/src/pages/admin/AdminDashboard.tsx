@@ -1,31 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
-import { Habitacion, Usuario, Reserva, TipoHabitacion, Amenidad, Servicio } from '@/types'
-import { Clock, Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, PieChart as PieIcon } from 'lucide-react'
-import { 
-  ResponsiveContainer, 
-  LineChart, 
-  ComposedChart,
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar
-} from 'recharts'
-// Asegúrate de importar esto arriba
-import { Actividad } from '@/types' 
-
+import { Habitacion, Usuario, Reserva, TipoHabitacion, Amenidad, Servicio, Actividad } from '@/types'
+import { Home, Users, BarChart3, Plus, Edit, Trash2, X, TrendingUp, TrendingDown, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, ClipboardList, Clock, PieChart as PieIcon } from 'lucide-react'
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend } from 'recharts'
 
 export const AdminDashboard = () => {
   const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState<'habitaciones' | 'servicios' | 'operadores' | 'estadisticas' | 'reservas'>('habitaciones')
+  
+  // TABS: Incluye 'historial'
+  const [activeTab, setActiveTab] = useState<'habitaciones' | 'servicios' | 'operadores' | 'estadisticas' | 'reservas' | 'historial'>('habitaciones')
   
   const [habitaciones, setHabitaciones] = useState<Habitacion[]>([])
   const [operadores, setOperadores] = useState<Usuario[]>([])
@@ -34,6 +18,7 @@ export const AdminDashboard = () => {
   const [servicios, setServicios] = useState<Servicio[]>([])
   const [tiposHabitacion, setTiposHabitacion] = useState<TipoHabitacion[]>([])
   const [amenidades, setAmenidades] = useState<Amenidad[]>([])
+  const [actividades, setActividades] = useState<Actividad[]>([])
   
   const [loading, setLoading] = useState(true)
 
@@ -44,14 +29,16 @@ export const AdminDashboard = () => {
   const cargarDatos = async () => {
     if (habitaciones.length === 0) setLoading(true);
     try {
-      const [habResult, opResult, resResult, cliResult, servResult, tiposResult, amenidadesResult] = await Promise.all([
+      const [habResult, opResult, resResult, cliResult, servResult, tiposResult, amenidadesResult, logResult] = await Promise.all([
         supabase.from('habitaciones').select('*').order('numero'),
         supabase.from('usuarios').select('*').eq('rol', 'operador').order('nombre'),
         supabase.from('reservas').select('*').order('fecha_reserva', { ascending: false }),
         supabase.from('usuarios').select('id, nombre, email, rol').eq('rol', 'usuario'),
         supabase.from('servicios').select('*').order('nombre'),
         supabase.from('tipos_habitacion').select('*').order('nombre'),
-        supabase.from('amenidades').select('*').order('nombre')
+        supabase.from('amenidades').select('*').order('nombre'),
+        // Historial de actividad (últimos 50)
+        supabase.from('historial_actividad').select('*, usuarios(nombre)').order('created_at', { ascending: false }).limit(50)
       ]);
       
       setHabitaciones(habResult.data || [])
@@ -61,6 +48,7 @@ export const AdminDashboard = () => {
       setServicios(servResult.data || [])
       setTiposHabitacion(tiposResult.data || [])
       setAmenidades(amenidadesResult.data || [])
+      setActividades(logResult.data || [])
 
     } catch (error) {
       console.error('Error cargando datos:', error)
@@ -85,7 +73,7 @@ export const AdminDashboard = () => {
           <p className="text-slate-600">Gestión integral de Horizonte Suites</p>
         </div>
 
-        {/* Tabs de Navegación */}
+        {/* NAVEGACIÓN (TABS) */}
         <div className="flex flex-wrap gap-2 mb-8 border-b border-slate-200 pb-1 overflow-x-auto">
           {[
             { id: 'habitaciones', icon: Home, label: 'Habitaciones' },
@@ -93,6 +81,7 @@ export const AdminDashboard = () => {
             { id: 'reservas', icon: Calendar, label: 'Reservas' },
             { id: 'operadores', icon: Users, label: 'Operadores' },
             { id: 'estadisticas', icon: BarChart3, label: 'Estadísticas' },
+            { id: 'historial', icon: ClipboardList, label: 'Actividad' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -113,225 +102,258 @@ export const AdminDashboard = () => {
           {activeTab === 'servicios' && <GestionServicios servicios={servicios} onRecargar={cargarDatos} />}
           {activeTab === 'reservas' && <GestionReservas reservas={reservas} habitaciones={habitaciones} clientes={clientes} onRecargar={cargarDatos} />}
           {activeTab === 'operadores' && <GestionOperadores operadores={operadores} onRecargar={cargarDatos} />}
+          {/* ESTADÍSTICAS MEJORADAS (CON DATOS KPI AVANZADOS) */}
           {activeTab === 'estadisticas' && <Estadisticas habitaciones={habitaciones} reservas={reservas} />}
+          {/* HISTORIAL DE ACTIVIDAD */}
+          {activeTab === 'historial' && <GestionHistorial actividades={actividades} onRecargar={cargarDatos} />}
         </div>
       </div>
     </div>
   )
 }
 
-// --- ESTADÍSTICAS AVANZADAS (CONECTADO A BDD REAL) ---
-const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: Reserva[] }) => {
-  const [actividades, setActividades] = useState<Actividad[]>([])
-  const [loadingLogs, setLoadingLogs] = useState(true)
+// --- COMPONENTE: ESTADÍSTICAS AVANZADAS (ESTILO ORIGINAL + LÓGICA POWER) ---
+const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: any[] }) => {
+  // 1. Helpers de Fechas
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+  const currentYear = now.getFullYear();
+  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
 
-  // 1. Cargar el Historial de Actividad desde Supabase
-  useEffect(() => {
-    const fetchHistorial = async () => {
-      try {
-        // Traemos el log y el nombre del usuario que hizo la acción
-        const { data, error } = await supabase
-          .from('historial_actividad')
-          .select('*, usuarios(nombre)')
-          .order('created_at', { ascending: false })
-          .limit(5)
+  // 2. Filtros de Reservas (Mes Actual vs Mes Anterior)
+  const reservasMesActual = reservas.filter(r => {
+    const d = new Date(r.fecha_reserva);
+    return d.getMonth() === currentMonth && d.getFullYear() === currentYear && r.estado !== 'cancelada';
+  });
 
-        if (error) throw error
-        setActividades(data || [])
-      } catch (error) {
-        console.error('Error cargando historial:', error)
-      } finally {
-        setLoadingLogs(false)
-      }
-    }
+  const reservasMesAnterior = reservas.filter(r => {
+    const d = new Date(r.fecha_reserva);
+    return d.getMonth() === prevMonth && d.getFullYear() === prevYear && r.estado !== 'cancelada';
+  });
 
-    fetchHistorial()
-  }, [reservas]) // Se recarga si cambian las reservas (asumiendo que eso genera logs)
-
-  // 2. CÁLCULOS DE DATOS (Igual que antes, pero usando 'origen' real)
+  // 3. CÁLCULO DE KPIs FINANCIEROS (RevPAR, ADR)
   
-  // A. Histórico (Ingresos vs Ocupación)
-  const getDatosHistoricos = () => {
+  // Ingresos
+  const ingresosActual = reservasMesActual.reduce((acc, r) => acc + r.total, 0);
+  const ingresosAnterior = reservasMesAnterior.reduce((acc, r) => acc + r.total, 0);
+  
+  // ADR (Tarifa Promedio Diaria) = Ingresos / Reservas
+  const adrActual = reservasMesActual.length > 0 ? ingresosActual / reservasMesActual.length : 0;
+  const adrAnterior = reservasMesAnterior.length > 0 ? ingresosAnterior / reservasMesAnterior.length : 0;
+
+  // RevPAR (Ingreso por Habitación Disponible) = Ingresos / (Total Habitaciones * 30 días)
+  const capacidadTotal = habitaciones.length * 30; // 30 días aprox
+  const revParActual = capacidadTotal > 0 ? ingresosActual / capacidadTotal : 0;
+  const revParAnterior = capacidadTotal > 0 ? ingresosAnterior / capacidadTotal : 0;
+
+  // Cálculo de Tendencias (Flechas)
+  const getTrend = (actual: number, previo: number) => {
+    if (previo === 0) return { val: 100, pos: true };
+    const diff = ((actual - previo) / previo) * 100;
+    return { val: Math.abs(diff).toFixed(1), pos: diff >= 0 };
+  };
+
+  const trendIngresos = getTrend(ingresosActual, ingresosAnterior);
+  const trendRevPar = getTrend(revParActual, revParAnterior);
+  const trendAdr = getTrend(adrActual, adrAnterior);
+
+  // Formateador
+  const formatMoney = (amount: number) => amount.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+  // Datos para Gráficos
+  const getIngresosPorMes = () => {
     const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
     return meses.map((mes, idx) => {
-      const reservasMes = reservas.filter(r => {
+      const totalMes = reservas
+        .filter(r => {
            const d = new Date(r.fecha_reserva);
-           return !isNaN(d.getTime()) && r.estado !== 'cancelada' && d.getMonth() === idx;
-      });
-      const totalIngresos = reservasMes.reduce((acc, r) => acc + r.total, 0);
-      const capacidadTotal = habitaciones.length * 30; 
-      const nochesVendidas = reservasMes.reduce((acc, r) => {
-          const dias = (new Date(r.fecha_salida).getTime() - new Date(r.fecha_entrada).getTime()) / (1000*3600*24);
-          return acc + (dias > 0 ? dias : 1);
-      }, 0);
-      const porcentajeOcupacion = capacidadTotal > 0 ? Math.round((nochesVendidas / capacidadTotal) * 100) : 0;
-
-      return { name: mes, Ingresos: totalIngresos, Ocupacion: porcentajeOcupacion };
+           // Incluimos activas y completadas para proyección
+           const esValida = r.estado === 'completada' || r.estado === 'activa';
+           return !isNaN(d.getTime()) && esValida && d.getMonth() === idx;
+        })
+        .reduce((acc, r) => acc + r.total, 0);
+      return { name: mes, Ingresos: totalMes };
     });
   };
-  const dataHistorica = getDatosHistoricos();
+  const dataIngresos = getIngresosPorMes();
 
-  // B. Fuentes de Reserva (DATOS REALES de la columna 'origen')
-  const getFuentesReales = () => {
-    const fuentes = reservas.reduce((acc: any, r) => {
-      // Si el origen es nulo, asumimos 'Web Directa' por defecto
-      const origen = r.origen || 'Web Directa';
-      acc[origen] = (acc[origen] || 0) + 1;
+  const getReservasPorTipo = () => {
+    const tipos = reservas.reduce((acc: any, r: any) => {
+      if (r.estado === 'cancelada') return acc;
+      const habitacion = habitaciones.find(h => h.id === r.habitacion_id);
+      const tipo = habitacion ? habitacion.tipo : 'Eliminada'; 
+      acc[tipo] = (acc[tipo] || 0) + 1;
       return acc;
     }, {});
-
-    // Mapeo de colores fijos para mantener consistencia
-    const colorMap: Record<string, string> = {
-      'Booking.com': '#3b82f6', // Azul
-      'Web Directa': '#0f766e', // Teal
-      'Expedia': '#10b981',     // Verde
-      'Airbnb': '#f43f5e',      // Rojo/Rosa
-      'Walk-in': '#64748b',     // Gris
-      'Telefonica': '#f59e0b'   // Naranja
-    };
-
-    return Object.entries(fuentes).map(([name, value]) => ({
-      name,
-      value,
-      color: colorMap[name] || '#94a3b8' // Color por defecto si es nuevo
-    }));
+    return Object.entries(tipos).map(([name, value]) => ({ name, value }));
   };
-  const dataFuentes = getFuentesReales();
-
-  // C. Estado Habitaciones (Real)
-  const habLimpias = habitaciones.filter(h => h.estado === 'disponible').length;
-  const habSucias = habitaciones.filter(h => h.estado === 'ocupada').length;
-  const habMantenimiento = habitaciones.filter(h => h.estado === 'mantenimiento').length;
-
-  const formatMoney = (val: number) => `$${(val/1000).toFixed(1)}k`;
+  const dataTipos = getReservasPorTipo();
+  const COLORS = ['#0F766E', '#2DD4BF', '#F59E0B', '#EF4444', '#6366F1', '#8B5CF6', '#94A3B8'];
 
   return (
-    <div className="space-y-6 pb-10 animate-in fade-in duration-500">
-      
-      {/* SECCIÓN SUPERIOR: GRÁFICOS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center mb-6">
-             <div><h3 className="text-lg font-bold text-slate-800">Rendimiento Histórico</h3><p className="text-sm text-slate-500">Ingresos vs Ocupación (Datos Reales)</p></div>
+    <div className="space-y-8 pb-10">
+      {/* TARJETAS DE KPIs AVANZADOS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        
+        {/* KPI 1: INGRESOS MES */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Ingresos (Mes Actual)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(ingresosActual)}</h3>
+            </div>
+            <div className="p-2 bg-teal-50 text-teal-600 rounded-lg"><DollarSign className="h-5 w-5"/></div>
           </div>
-          <div className="h-[320px] w-full">
+          <div className={`mt-4 flex items-center text-xs ${trendIngresos.pos ? 'text-green-600' : 'text-red-600'}`}>
+            {trendIngresos.pos ? <TrendingUp className="h-3 w-3 mr-1"/> : <TrendingDown className="h-3 w-3 mr-1"/>}
+            <span className="font-bold mr-1">{trendIngresos.val}%</span> vs mes anterior
+          </div>
+        </div>
+
+        {/* KPI 2: RevPAR */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">RevPAR (Rendimiento)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(revParActual)}</h3>
+            </div>
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><BarChart3 className="h-5 w-5"/></div>
+          </div>
+          <div className={`mt-4 flex items-center text-xs ${trendRevPar.pos ? 'text-green-600' : 'text-red-600'}`}>
+             {trendRevPar.pos ? <TrendingUp className="h-3 w-3 mr-1"/> : <TrendingDown className="h-3 w-3 mr-1"/>}
+             <span className="font-bold mr-1">{trendRevPar.val}%</span> eficiencia
+          </div>
+        </div>
+
+        {/* KPI 3: ADR */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-slate-500">ADR (Tarifa Promedio)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(adrActual)}</h3>
+            </div>
+            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><PieIcon className="h-5 w-5"/></div>
+          </div>
+          <div className={`mt-4 flex items-center text-xs ${trendAdr.pos ? 'text-green-600' : 'text-red-600'}`}>
+             {trendAdr.pos ? <TrendingUp className="h-3 w-3 mr-1"/> : <TrendingDown className="h-3 w-3 mr-1"/>}
+             <span className="font-bold mr-1">{trendAdr.val}%</span> vs mes anterior
+          </div>
+        </div>
+
+        {/* KPI 4: OCUPACIÓN / DISPONIBILIDAD */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+          <div className="flex justify-between items-start">
+            <div>
+               <p className="text-sm font-medium text-slate-500">Habitaciones Libres</p>
+               <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                 {habitaciones.filter(h => h.estado === 'disponible').length} <span className="text-sm text-slate-400 font-normal">/ {habitaciones.length}</span>
+               </h3>
+            </div>
+            <div className="p-2 bg-green-50 text-green-600 rounded-lg"><CheckCircle className="h-5 w-5"/></div>
+          </div>
+          <p className="mt-4 text-xs text-slate-500">Disponibilidad en tiempo real</p>
+        </div>
+      </div>
+
+      {/* GRÁFICOS (VISUALIZACIÓN CLÁSICA PERO CON DATOS PRECISOS) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-teal-600" /> Evolución de Ingresos
+          </h3>
+          <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={dataHistorica}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0"/>
-                <XAxis dataKey="name" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12}/>
-                <YAxis yAxisId="left" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12} tickFormatter={formatMoney}/>
-                <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12} tickFormatter={v => `${v}%`}/>
-                <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 10px rgba(0,0,0,0.1)'}} />
-                <Bar yAxisId="left" dataKey="Ingresos" fill="#0d9488" radius={[4,4,0,0]} barSize={40} />
-                <Line yAxisId="right" type="monotone" dataKey="Ocupacion" stroke="#6366f1" strokeWidth={3} dot={{r:4, fill:'#6366f1'}} />
-              </ComposedChart>
+              <BarChart data={dataIngresos}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
+                <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(value: number) => [formatMoney(value), 'Ingresos']} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Bar dataKey="Ingresos" fill="#0F766E" radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* DONUT: Fuentes de Reserva */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
-          <h3 className="text-lg font-bold text-slate-800 mb-2">Fuentes de Reserva</h3>
-          <p className="text-sm text-slate-500 mb-4">Origen registrado en DB</p>
-          <div className="flex-1 min-h-[200px] relative">
-            {dataFuentes.length > 0 ? (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <Coffee className="h-5 w-5 text-teal-600" /> Distribución por Tipo
+          </h3>
+          <div className="h-[300px] w-full">
+            {dataTipos.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={dataFuentes} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                    {dataFuentes.map((entry: any, index: number) => <Cell key={`cell-${index}`} fill={entry.color} stroke="none"/>)}
+                  <Pie data={dataTipos} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                    {dataTipos.map((entry:any, index:number) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
                   </Pie>
                   <Tooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-slate-400">Sin datos de origen</div>
+              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                <PieIcon className="h-10 w-10 mb-2 opacity-20" />
+                <p>No hay datos suficientes</p>
+              </div>
             )}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center"><span className="block text-2xl font-bold text-slate-800">{reservas.length}</span><span className="text-xs text-slate-400">Reservas</span></div>
-            </div>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-600">
-             {dataFuentes.map((f: any, i: number) => (
-               <div key={i} className="flex items-center"><span className="w-2.5 h-2.5 rounded-full mr-2" style={{backgroundColor: f.color}}></span>{f.name} ({f.value})</div>
-             ))}
-          </div>
-        </div>
-      </div>
-
-      {/* SECCIÓN INFERIOR: OPERACIONES Y ACTIVIDAD */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* ESTADO HABITACIONES */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold text-slate-800">Estado Operativo</h3>
-                <button onClick={() => document.getElementById('tab-habitaciones')?.click()} className="text-sm text-indigo-600 hover:underline">Ver Inventario</button>
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-center mb-6">
-                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                    <span className="block text-2xl font-bold text-emerald-600">{habLimpias}</span>
-                    <span className="text-xs font-bold text-emerald-800 uppercase">Limpias</span>
-                </div>
-                <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-                    <span className="block text-2xl font-bold text-amber-600">{habSucias}</span>
-                    <span className="text-xs font-bold text-amber-800 uppercase">Ocupadas</span>
-                </div>
-                <div className="p-4 bg-rose-50 rounded-xl border border-rose-100">
-                    <span className="block text-2xl font-bold text-rose-600">{habMantenimiento}</span>
-                    <span className="text-xs font-bold text-rose-800 uppercase">Mantenim.</span>
-                </div>
-            </div>
-            {/* Alertas reales de Mantenimiento */}
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Alertas de Mantenimiento</h4>
-            <div className="space-y-2">
-               {habMantenimiento > 0 ? habitaciones.filter(h => h.estado === 'mantenimiento').map(h => (
-                  <div key={h.id} className="flex justify-between p-2 bg-rose-50 rounded border border-rose-100 text-sm">
-                      <span className="font-bold text-rose-700">Hab. {h.numero}</span>
-                      <span className="text-rose-600">Fuera de servicio</span>
-                  </div>
-               )) : <p className="text-sm text-slate-400 italic">No hay habitaciones bloqueadas.</p>}
-            </div>
-        </div>
-
-        {/* ACTIVIDAD RECIENTE (LOG REAL) */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full">
-            <h3 className="text-lg font-bold text-slate-800 mb-6">Log de Actividad</h3>
-            
-            <div className="relative pl-6 border-l-2 border-slate-100 space-y-8 flex-1">
-                {loadingLogs ? (
-                   <div className="text-sm text-slate-400">Cargando historial...</div>
-                ) : actividades.length > 0 ? (
-                  actividades.map((log) => (
-                    <div key={log.id} className="relative group">
-                        <div className={`absolute -left-[31px] top-0 h-4 w-4 rounded-full border-4 border-white shadow-sm 
-                          ${log.tipo === 'success' ? 'bg-emerald-500' : 
-                            log.tipo === 'warning' ? 'bg-amber-500' : 
-                            log.tipo === 'alert' ? 'bg-red-500' : 'bg-blue-500'}`}>
-                        </div>
-                        <div className="flex flex-col">
-                           <span className="text-xs text-slate-400 mb-0.5 flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {new Date(log.created_at).toLocaleString()}
-                           </span>
-                           <p className="text-sm text-slate-800 font-bold">{log.accion}</p>
-                           <p className="text-sm text-slate-500">{log.detalles}</p>
-                           <p className="text-xs text-slate-400 mt-1">Usuario: {log.usuarios?.nombre || 'Sistema'}</p>
-                        </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-slate-400 text-sm italic">Sin actividad reciente registrada.</p>
-                )}
-            </div>
         </div>
       </div>
     </div>
   )
 }
-// --- GESTIÓN DE HABITACIONES (TEAL Y SIN COLORES VIEJOS) ---
+
+// --- COMPONENTE: GESTIÓN DE HISTORIAL (SE MANTIENE EL LOG) ---
+const GestionHistorial = ({ actividades, onRecargar }: { actividades: Actividad[], onRecargar: () => void }) => {
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Log de Actividad</h2>
+          <p className="text-sm text-slate-500">Auditoría de las últimas 50 acciones del sistema</p>
+        </div>
+        <button onClick={onRecargar} className="p-2 text-slate-500 hover:text-teal-600 bg-white border border-slate-200 rounded-lg shadow-sm">
+          <RefreshCw className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        {actividades.length === 0 ? (
+          <div className="p-8 text-center text-slate-500">No hay actividad registrada aún.</div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {actividades.map((log) => (
+              <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-4">
+                <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 
+                  ${log.tipo === 'success' ? 'bg-emerald-500' : 
+                    log.tipo === 'warning' ? 'bg-amber-500' : 
+                    log.tipo === 'alert' ? 'bg-red-500' : 'bg-blue-500'}`} 
+                />
+                <div className="flex-1">
+                  <div className="flex justify-between items-start">
+                    <h3 className="text-sm font-bold text-slate-800">{log.accion}</h3>
+                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {new Date(log.created_at).toLocaleString('es-AR')}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600 mt-1">{log.detalles}</p>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Usuario: <span className="font-medium text-slate-600">{log.usuarios?.nombre || 'Sistema'}</span>
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- RESTO DE COMPONENTES ORIGINALES (Gestión CRUDs) ---
+
 const GestionHabitaciones = ({ habitaciones, tipos, amenidadesDisponibles, onRecargar }: any) => {
   const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Habitacion | null>(null); const [nuevaAmenidad, setNuevaAmenidad] = useState('');
-  // Filtros
   const [filtroNumero, setFiltroNumero] = useState(''); const [filtroTipo, setFiltroTipo] = useState(''); const [filtroAmenidad, setFiltroAmenidad] = useState(''); const [filtroEstado, setFiltroEstado] = useState(''); const [filtroPrecioMax, setFiltroPrecioMax] = useState(''); const [filtroCapacidad, setFiltroCapacidad] = useState('');
   const [habitacionesFiltradas, setHabitacionesFiltradas] = useState(habitaciones);
 
@@ -418,7 +440,6 @@ const GestionHabitaciones = ({ habitaciones, tipos, amenidadesDisponibles, onRec
   )
 }
 
-// --- GESTIÓN DE SERVICIOS (TEAL) ---
 const GestionServicios = ({ servicios, onRecargar }: { servicios: Servicio[], onRecargar: () => void }) => {
   const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Servicio | null>(null); const [formData, setFormData] = useState({ nombre: '', descripcion: '', precio: '', imagen_url: '' });
   const handleSubmit = async (e: React.FormEvent) => { e.preventDefault(); const dataToSave = { nombre: formData.nombre, descripcion: formData.descripcion, precio: parseFloat(formData.precio), imagen_url: formData.imagen_url, disponible: true }; try { if (editando) await supabase.from('servicios').update(dataToSave).eq('id', editando.id); else await supabase.from('servicios').insert([dataToSave]); setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setEditando(null); setShowModal(false); onRecargar(); } catch (error) { console.error(error) } }
@@ -426,7 +447,6 @@ const GestionServicios = ({ servicios, onRecargar }: { servicios: Servicio[], on
   return ( <div> <div className="mb-6"><button onClick={() => {setEditando(null); setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setShowModal(true)}} className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition-colors w-full md:w-auto justify-center"><Plus className="h-5 w-5" /> Nuevo Servicio</button></div> <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{servicios.map((s) => (<div key={s.id} className="bg-white p-6 rounded-lg border shadow-sm hover:shadow-md transition-shadow"><h3 className="font-bold text-lg text-slate-900">{s.nombre}</h3><p className="text-sm text-slate-600 mb-2 line-clamp-2">{s.descripcion}</p><p className="font-bold text-teal-600 mb-4">${s.precio.toLocaleString('es-AR')}</p><div className="flex gap-2"><button onClick={() => { setEditando(s); setFormData({ nombre: s.nombre, descripcion: s.descripcion, precio: s.precio.toString(), imagen_url: s.imagen_url || '' }); setShowModal(true) }} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium transition-colors">Editar</button><button onClick={() => handleDelete(s.id)} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded-lg text-sm font-medium transition-colors">Eliminar</button></div></div>))}</div> {showModal && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><div className="bg-white p-6 rounded-xl max-w-md w-full shadow-2xl"><h2 className="text-2xl font-bold mb-4 text-slate-900">{editando ? 'Editar' : 'Nuevo'} Servicio</h2><form onSubmit={handleSubmit} className="space-y-4"><input placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><textarea placeholder="Descripción" value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><input type="number" placeholder="Precio" value={formData.precio} onChange={e => setFormData({...formData, precio: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><div className="flex gap-2 pt-2"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium transition-colors">Guardar</button><button type="button" onClick={() => setShowModal(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium transition-colors">Cancelar</button></div></form></div></div>)} </div> )
 }
 
-// --- GESTIÓN DE RESERVAS (TEAL + 3 BOTONES) ---
 const GestionReservas = ({ reservas, habitaciones, clientes, onRecargar }: any) => {
   const [fechaInicio, setFIni] = useState(''); const [fechaFin, setFFin] = useState(''); const [fNombre, setFNom] = useState(''); const [fTipo, setFTipo] = useState('');
   const [filtradas, setFiltradas] = useState(reservas); const [showModal, setShowModal] = useState(false); const [reservaAEditar, setReservaAEditar] = useState<any>(null);
@@ -451,7 +471,6 @@ const ModalEditarReserva = ({ reserva, habitaciones, clientes, onClose, onSave }
   return ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl"> <h2 className="font-bold text-xl mb-2 text-slate-900">Editar Reserva</h2> <p className="text-sm text-slate-500 mb-4">Cliente: {cliente?.nombre || 'Desconocido'}</p> <form onSubmit={handleSubmit} className="space-y-4"> {error && <p className="text-red-700 bg-red-50 p-3 rounded-lg text-sm flex gap-2"><AlertCircle className="h-4 w-4"/>{error}</p>} <div><label className="block text-sm font-medium text-slate-700 mb-1">Habitación</label><select value={formData.habitacion_id} onChange={e=>setFormData({...formData, habitacion_id:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg">{habitaciones.map((h:any)=><option key={h.id} value={h.id}>{h.numero} - {h.tipo} (${h.precio_noche})</option>)}</select></div> <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Entrada</label><input type="date" value={formData.fecha_entrada} onChange={e=>setFormData({...formData, fecha_entrada:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg"/></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Salida</label><input type="date" value={formData.fecha_salida} onChange={e=>setFormData({...formData, fecha_salida:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg"/></div></div> <div className="bg-slate-50 p-3 rounded-lg flex justify-between items-center"><span className="text-sm text-slate-600">Nuevo Total:</span><span className="font-bold text-teal-600 text-lg">${total.toLocaleString('es-AR')}</span></div> <div className="flex gap-3 pt-2"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium transition-colors">Guardar</button><button type="button" onClick={onClose} className="flex-1 bg-slate-200 text-slate-700 py-2 rounded-lg hover:bg-slate-300 font-medium">Cancelar</button></div> </form> </div> </div> )
 }
 
-// --- GESTIÓN DE OPERADORES (TEAL + SHIELD) ---
 const GestionOperadores = ({ operadores, onRecargar }: any) => {
   const [showCreate, setShowCreate] = useState(false); const [showEdit, setShowEdit] = useState(false); const [opEdit, setOpEdit] = useState<any>(null);
   const [form, setForm] = useState({email:'', nombre:'', password:''}); const [error, setError] = useState('');
