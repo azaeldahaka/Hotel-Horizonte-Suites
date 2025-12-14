@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion } from '@/types'
 import { Calendar, Users, CreditCard, AlertCircle, CheckCircle, Loader2, Clock, ShieldCheck, ArrowRight } from 'lucide-react'
+import { logActividad } from '@/utils/loggers'
 
 // Función auxiliar para obtener la fecha local en formato YYYY-MM-DD
 const getTodayLocalString = () => {
@@ -159,6 +160,14 @@ export const CrearReserva = () => {
           }
         }
       });
+
+      // 5. NUEVO: Log de Actividad
+      await logActividad(
+        user?.id,
+        'Nueva Reserva Web',
+        `Reserva confirmada: Hab. ${habitacion?.numero} - $${total}`,
+        'success'
+      );
 
       setPaso('confirmacion')
     } catch (err: any) {

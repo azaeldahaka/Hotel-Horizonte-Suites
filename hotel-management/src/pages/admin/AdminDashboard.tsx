@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion, Usuario, Reserva, TipoHabitacion, Amenidad, Servicio } from '@/types'
-import { Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, PieChart as PieIcon } from 'lucide-react'
+import { Clock, Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, PieChart as PieIcon } from 'lucide-react'
 import { 
   ResponsiveContainer, 
   LineChart, 
+  ComposedChart,
   Line, 
   XAxis, 
   YAxis, 
@@ -18,6 +19,9 @@ import {
   BarChart,
   Bar
 } from 'recharts'
+// Asegúrate de importar esto arriba
+import { Actividad } from '@/types' 
+
 
 export const AdminDashboard = () => {
   const { user } = useAuth()
@@ -116,245 +120,214 @@ export const AdminDashboard = () => {
   )
 }
 
-// --- ESTADÍSTICAS AVANZADAS (IMPLEMENTACIÓN BASADA EN REPORTE 2025) ---
-const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: any[] }) => {
-  // 1. Helpers de Fechas para Comparativas [cite: 38]
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-  const currentYear = now.getFullYear();
-  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+// --- ESTADÍSTICAS AVANZADAS (CONECTADO A BDD REAL) ---
+const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: Reserva[] }) => {
+  const [actividades, setActividades] = useState<Actividad[]>([])
+  const [loadingLogs, setLoadingLogs] = useState(true)
 
-  // Filtros de Reservas por periodo
-  const reservasMesActual = reservas.filter(r => {
-    const d = new Date(r.fecha_reserva);
-    return d.getMonth() === currentMonth && d.getFullYear() === currentYear && r.estado !== 'cancelada';
-  });
+  // 1. Cargar el Historial de Actividad desde Supabase
+  useEffect(() => {
+    const fetchHistorial = async () => {
+      try {
+        // Traemos el log y el nombre del usuario que hizo la acción
+        const { data, error } = await supabase
+          .from('historial_actividad')
+          .select('*, usuarios(nombre)')
+          .order('created_at', { ascending: false })
+          .limit(5)
 
-  const reservasMesAnterior = reservas.filter(r => {
-    const d = new Date(r.fecha_reserva);
-    return d.getMonth() === prevMonth && d.getFullYear() === prevYear && r.estado !== 'cancelada';
-  });
+        if (error) throw error
+        setActividades(data || [])
+      } catch (error) {
+        console.error('Error cargando historial:', error)
+      } finally {
+        setLoadingLogs(false)
+      }
+    }
 
-  // 2. CÁLCULO DE KPIs HOTELIEROS [cite: 24]
+    fetchHistorial()
+  }, [reservas]) // Se recarga si cambian las reservas (asumiendo que eso genera logs)
+
+  // 2. CÁLCULOS DE DATOS (Igual que antes, pero usando 'origen' real)
   
-  // Ingresos
-  const ingresosActual = reservasMesActual.reduce((acc, r) => acc + r.total, 0);
-  const ingresosAnterior = reservasMesAnterior.reduce((acc, r) => acc + r.total, 0);
-  
-  // Ocupación (Noches vendidas vs Disponibles en el mes)
-  // Simplificado: Usamos reservas activas/completadas como proxy de ocupación
-  const ocupacionActual = (reservasMesActual.length / (habitaciones.length * 30)) * 100; // Aprox mensual
-  
-  // ADR (Average Daily Rate) = Ingresos / Habitaciones Vendidas 
-  const adrActual = reservasMesActual.length > 0 ? ingresosActual / reservasMesActual.length : 0;
-  const adrAnterior = reservasMesAnterior.length > 0 ? ingresosAnterior / reservasMesAnterior.length : 0;
-
-  // RevPAR = ADR * Tasa Ocupación [cite: 32]
-  // O Ingresos Totales / Habitaciones Disponibles Totales
-  const revParActual = ingresosActual / (habitaciones.length * 30); // 30 días aprox
-  const revParAnterior = ingresosAnterior / (habitaciones.length * 30);
-
-  // Tasa de Cancelación 
-  const totalReservasMes = reservas.filter(r => {
-    const d = new Date(r.fecha_reserva);
-    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-  });
-  const canceladasMes = totalReservasMes.filter(r => r.estado === 'cancelada').length;
-  const tasaCancelacion = totalReservasMes.length > 0 ? (canceladasMes / totalReservasMes.length) * 100 : 0;
-
-  // Helper para tendencias (Flechas)
-  const getTrend = (actual: number, previo: number) => {
-    if (previo === 0) return { val: 100, pos: true };
-    const diff = ((actual - previo) / previo) * 100;
-    return { val: Math.abs(diff).toFixed(1), pos: diff >= 0 };
-  };
-
-  const trendIngresos = getTrend(ingresosActual, ingresosAnterior);
-  const trendRevPar = getTrend(revParActual, revParAnterior);
-
-  // Datos Gráfico Principal (Mismo que tenías, pero visualmente pulido)
-  const getIngresosPorMes = () => {
+  // A. Histórico (Ingresos vs Ocupación)
+  const getDatosHistoricos = () => {
     const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
     return meses.map((mes, idx) => {
-      const totalMes = reservas
-        .filter(r => {
+      const reservasMes = reservas.filter(r => {
            const d = new Date(r.fecha_reserva);
            return !isNaN(d.getTime()) && r.estado !== 'cancelada' && d.getMonth() === idx;
-        })
-        .reduce((acc, r) => acc + r.total, 0);
-      return { name: mes, Ingresos: totalMes };
+      });
+      const totalIngresos = reservasMes.reduce((acc, r) => acc + r.total, 0);
+      const capacidadTotal = habitaciones.length * 30; 
+      const nochesVendidas = reservasMes.reduce((acc, r) => {
+          const dias = (new Date(r.fecha_salida).getTime() - new Date(r.fecha_entrada).getTime()) / (1000*3600*24);
+          return acc + (dias > 0 ? dias : 1);
+      }, 0);
+      const porcentajeOcupacion = capacidadTotal > 0 ? Math.round((nochesVendidas / capacidadTotal) * 100) : 0;
+
+      return { name: mes, Ingresos: totalIngresos, Ocupacion: porcentajeOcupacion };
     });
   };
-  const dataIngresos = getIngresosPorMes();
+  const dataHistorica = getDatosHistoricos();
 
-  // Datos Gráfico Torta (Tipos de Habitación - ReRTI concept [cite: 57])
-  const getReservasPorTipo = () => {
-    const tipos = reservas.reduce((acc: any, r: any) => {
-      if (r.estado === 'cancelada') return acc;
-      const habitacion = habitaciones.find(h => h.id === r.habitacion_id);
-      const tipo = habitacion ? habitacion.tipo : 'Eliminada'; 
-      acc[tipo] = (acc[tipo] || 0) + 1;
+  // B. Fuentes de Reserva (DATOS REALES de la columna 'origen')
+  const getFuentesReales = () => {
+    const fuentes = reservas.reduce((acc: any, r) => {
+      // Si el origen es nulo, asumimos 'Web Directa' por defecto
+      const origen = r.origen || 'Web Directa';
+      acc[origen] = (acc[origen] || 0) + 1;
       return acc;
     }, {});
-    return Object.entries(tipos).map(([name, value]) => ({ name, value }));
-  };
-  const dataTipos = getReservasPorTipo();
-  const COLORS = ['#0F766E', '#2DD4BF', '#F59E0B', '#EF4444', '#6366F1', '#8B5CF6', '#94A3B8'];
 
-  // Formateador de moneda
-  const formatMoney = (amount: number) => amount.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+    // Mapeo de colores fijos para mantener consistencia
+    const colorMap: Record<string, string> = {
+      'Booking.com': '#3b82f6', // Azul
+      'Web Directa': '#0f766e', // Teal
+      'Expedia': '#10b981',     // Verde
+      'Airbnb': '#f43f5e',      // Rojo/Rosa
+      'Walk-in': '#64748b',     // Gris
+      'Telefonica': '#f59e0b'   // Naranja
+    };
+
+    return Object.entries(fuentes).map(([name, value]) => ({
+      name,
+      value,
+      color: colorMap[name] || '#94a3b8' // Color por defecto si es nuevo
+    }));
+  };
+  const dataFuentes = getFuentesReales();
+
+  // C. Estado Habitaciones (Real)
+  const habLimpias = habitaciones.filter(h => h.estado === 'disponible').length;
+  const habSucias = habitaciones.filter(h => h.estado === 'ocupada').length;
+  const habMantenimiento = habitaciones.filter(h => h.estado === 'mantenimiento').length;
+
+  const formatMoney = (val: number) => `$${(val/1000).toFixed(1)}k`;
 
   return (
-    <div className="space-y-8 pb-10 animate-in fade-in duration-500">
+    <div className="space-y-6 pb-10 animate-in fade-in duration-500">
       
-      {/* SECCIÓN 1: SCORECARDS (Nivel Superior Jerárquico)  */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        
-        {/* KPI: RevPAR (El más importante según el reporte)  */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-slate-500">RevPAR (Mes Actual)</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(revParActual)}</h3>
-            </div>
-            <div className="p-2 bg-teal-50 text-teal-600 rounded-lg"><TrendingUp className="h-5 w-5"/></div>
+      {/* SECCIÓN SUPERIOR: GRÁFICOS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex justify-between items-center mb-6">
+             <div><h3 className="text-lg font-bold text-slate-800">Rendimiento Histórico</h3><p className="text-sm text-slate-500">Ingresos vs Ocupación (Datos Reales)</p></div>
           </div>
-          <div className={`mt-4 flex items-center text-xs ${trendRevPar.pos ? 'text-green-600' : 'text-red-600'}`}>
-            {trendRevPar.pos ? '↑' : '↓'} <span className="font-bold mx-1">{trendRevPar.val}%</span> vs mes anterior
-          </div>
-        </div>
-
-        {/* KPI: ADR (Tarifa Promedio)  */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-slate-500">ADR (Tarifa Promedio)</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(adrActual)}</h3>
-            </div>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><DollarSign className="h-5 w-5"/></div>
-          </div>
-          <p className="mt-4 text-xs text-slate-500">Precio promedio por venta</p>
-        </div>
-
-        {/* KPI: Ingresos Netos [cite: 21] */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Ingresos (Mes)</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(ingresosActual)}</h3>
-            </div>
-            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><BarChart3 className="h-5 w-5"/></div>
-          </div>
-          <div className={`mt-4 flex items-center text-xs ${trendIngresos.pos ? 'text-green-600' : 'text-red-600'}`}>
-            {trendIngresos.pos ? '↑' : '↓'} <span className="font-bold mx-1">{trendIngresos.val}%</span> vs mes anterior
-          </div>
-        </div>
-
-        {/* KPI: Tasa de Cancelación  */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Tasa Cancelación</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{tasaCancelacion.toFixed(1)}%</h3>
-            </div>
-            <div className={`p-2 rounded-lg ${tasaCancelacion > 20 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-              <AlertCircle className="h-5 w-5"/>
-            </div>
-          </div>
-           {/* Lógica de alerta sugerida por el reporte [cite: 84] */}
-          <p className="mt-4 text-xs text-slate-500">
-            {tasaCancelacion > 20 ? '⚠️ Revisar políticas' : 'Nivel saludable'}
-          </p>
-        </div>
-      </div>
-
-      {/* SECCIÓN 2: GRÁFICOS INTERMEDIOS (Drill-down visual) [cite: 9] */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Gráfico de Evolución de Ingresos */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-teal-600" /> Evolución Anual de Ingresos
-          </h3>
-          <div className="h-[300px] w-full">
+          <div className="h-[320px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dataIngresos}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val/1000}k`} />
-                <Tooltip 
-                  cursor={{ fill: '#f1f5f9' }} 
-                  formatter={(value: number) => [formatMoney(value), 'Ingresos']} 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} 
-                />
-                <Bar dataKey="Ingresos" fill="#0F766E" radius={[4, 4, 0, 0]} />
-              </BarChart>
+              <ComposedChart data={dataHistorica}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0"/>
+                <XAxis dataKey="name" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12}/>
+                <YAxis yAxisId="left" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12} tickFormatter={formatMoney}/>
+                <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} stroke="#64748b" fontSize={12} tickFormatter={v => `${v}%`}/>
+                <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 10px rgba(0,0,0,0.1)'}} />
+                <Bar yAxisId="left" dataKey="Ingresos" fill="#0d9488" radius={[4,4,0,0]} barSize={40} />
+                <Line yAxisId="right" type="monotone" dataKey="Ocupacion" stroke="#6366f1" strokeWidth={3} dot={{r:4, fill:'#6366f1'}} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Gráfico de Distribución por Tipo */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
-            <PieIcon className="h-5 w-5 text-teal-600" /> Distribución de Demanda (ReRTI)
-          </h3>
-          <div className="h-[300px] w-full">
-            {dataTipos.length > 0 ? (
+        {/* DONUT: Fuentes de Reserva */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+          <h3 className="text-lg font-bold text-slate-800 mb-2">Fuentes de Reserva</h3>
+          <p className="text-sm text-slate-500 mb-4">Origen registrado en DB</p>
+          <div className="flex-1 min-h-[200px] relative">
+            {dataFuentes.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie 
-                    data={dataTipos} 
-                    cx="50%" 
-                    cy="50%" 
-                    innerRadius={60} 
-                    outerRadius={80} 
-                    paddingAngle={5} 
-                    dataKey="value"
-                  >
-                    {dataTipos.map((entry:any, index:number) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
+                  <Pie data={dataFuentes} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                    {dataFuentes.map((entry: any, index: number) => <Cell key={`cell-${index}`} fill={entry.color} stroke="none"/>)}
                   </Pie>
                   <Tooltip />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{fontSize: '12px'}} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                <PieIcon className="h-10 w-10 mb-2 opacity-20" />
-                <p>Insuficientes datos</p>
-              </div>
+              <div className="flex h-full items-center justify-center text-slate-400">Sin datos de origen</div>
             )}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-center"><span className="block text-2xl font-bold text-slate-800">{reservas.length}</span><span className="text-xs text-slate-400">Reservas</span></div>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-600">
+             {dataFuentes.map((f: any, i: number) => (
+               <div key={i} className="flex items-center"><span className="w-2.5 h-2.5 rounded-full mr-2" style={{backgroundColor: f.color}}></span>{f.name} ({f.value})</div>
+             ))}
           </div>
         </div>
       </div>
 
-      {/* SECCIÓN 3: OPERATIVO (Nivel Inferior) [cite: 11] */}
-      {/* Alertas rápidas sobre estado físico del hotel */}
-      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex justify-between items-center">
-        <div className="flex gap-3 items-center">
-            <div className="bg-orange-100 p-2 rounded-full text-orange-600">
-                <RefreshCw className="h-5 w-5" />
+      {/* SECCIÓN INFERIOR: OPERACIONES Y ACTIVIDAD */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* ESTADO HABITACIONES */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-slate-800">Estado Operativo</h3>
+                <button onClick={() => document.getElementById('tab-habitaciones')?.click()} className="text-sm text-indigo-600 hover:underline">Ver Inventario</button>
             </div>
-            <div>
-                <h4 className="font-bold text-orange-900">Estado de Habitaciones</h4>
-                <p className="text-sm text-orange-700">
-                    {habitaciones.filter(h => h.estado === 'mantenimiento').length} habitaciones en mantenimiento hoy.
-                </p>
+            <div className="grid grid-cols-3 gap-4 text-center mb-6">
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
+                    <span className="block text-2xl font-bold text-emerald-600">{habLimpias}</span>
+                    <span className="text-xs font-bold text-emerald-800 uppercase">Limpias</span>
+                </div>
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
+                    <span className="block text-2xl font-bold text-amber-600">{habSucias}</span>
+                    <span className="text-xs font-bold text-amber-800 uppercase">Ocupadas</span>
+                </div>
+                <div className="p-4 bg-rose-50 rounded-xl border border-rose-100">
+                    <span className="block text-2xl font-bold text-rose-600">{habMantenimiento}</span>
+                    <span className="text-xs font-bold text-rose-800 uppercase">Mantenim.</span>
+                </div>
+            </div>
+            {/* Alertas reales de Mantenimiento */}
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Alertas de Mantenimiento</h4>
+            <div className="space-y-2">
+               {habMantenimiento > 0 ? habitaciones.filter(h => h.estado === 'mantenimiento').map(h => (
+                  <div key={h.id} className="flex justify-between p-2 bg-rose-50 rounded border border-rose-100 text-sm">
+                      <span className="font-bold text-rose-700">Hab. {h.numero}</span>
+                      <span className="text-rose-600">Fuera de servicio</span>
+                  </div>
+               )) : <p className="text-sm text-slate-400 italic">No hay habitaciones bloqueadas.</p>}
             </div>
         </div>
-        <button 
-            onClick={() => document.getElementById('tab-habitaciones')?.click()} // Hack simple para navegar
-            className="text-sm font-bold text-orange-700 hover:underline px-3"
-        >
-            Ver Inventario →
-        </button>
+
+        {/* ACTIVIDAD RECIENTE (LOG REAL) */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full">
+            <h3 className="text-lg font-bold text-slate-800 mb-6">Log de Actividad</h3>
+            
+            <div className="relative pl-6 border-l-2 border-slate-100 space-y-8 flex-1">
+                {loadingLogs ? (
+                   <div className="text-sm text-slate-400">Cargando historial...</div>
+                ) : actividades.length > 0 ? (
+                  actividades.map((log) => (
+                    <div key={log.id} className="relative group">
+                        <div className={`absolute -left-[31px] top-0 h-4 w-4 rounded-full border-4 border-white shadow-sm 
+                          ${log.tipo === 'success' ? 'bg-emerald-500' : 
+                            log.tipo === 'warning' ? 'bg-amber-500' : 
+                            log.tipo === 'alert' ? 'bg-red-500' : 'bg-blue-500'}`}>
+                        </div>
+                        <div className="flex flex-col">
+                           <span className="text-xs text-slate-400 mb-0.5 flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {new Date(log.created_at).toLocaleString()}
+                           </span>
+                           <p className="text-sm text-slate-800 font-bold">{log.accion}</p>
+                           <p className="text-sm text-slate-500">{log.detalles}</p>
+                           <p className="text-xs text-slate-400 mt-1">Usuario: {log.usuarios?.nombre || 'Sistema'}</p>
+                        </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-slate-400 text-sm italic">Sin actividad reciente registrada.</p>
+                )}
+            </div>
+        </div>
       </div>
     </div>
   )
 }
-
 // --- GESTIÓN DE HABITACIONES (TEAL Y SIN COLORES VIEJOS) ---
 const GestionHabitaciones = ({ habitaciones, tipos, amenidadesDisponibles, onRecargar }: any) => {
   const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Habitacion | null>(null); const [nuevaAmenidad, setNuevaAmenidad] = useState('');

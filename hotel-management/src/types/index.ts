@@ -39,6 +39,7 @@ export interface Reserva {
   estado: 'activa' | 'completada' | 'cancelada'
   total: number
   fecha_reserva?: string
+  origen?: string
 }
 
 export interface Consulta {
@@ -61,7 +62,6 @@ export interface Pago {
   fecha_pago?: string
 }
 
-
 export interface TipoHabitacion {
   id: string
   nombre: string
@@ -73,3 +73,14 @@ export interface Amenidad {
   nombre: string
   icono?: string
 }
+
+export interface Actividad {
+  id: string
+  usuario_id: string
+  accion: string
+  detalles: string | null
+  tipo: 'info' | 'success' | 'warning' | 'alert'
+  created_at: string
+  usuarios?: { nombre: string } // Para mostrar el nombre en el log
+}
+
