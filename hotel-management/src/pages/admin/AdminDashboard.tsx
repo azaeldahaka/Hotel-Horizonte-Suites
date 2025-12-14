@@ -116,33 +116,71 @@ export const AdminDashboard = () => {
   )
 }
 
-// --- ESTADÍSTICAS (AHORA INCLUYE RESERVAS ACTIVAS EN EL TOTAL) ---
+// --- ESTADÍSTICAS AVANZADAS (IMPLEMENTACIÓN BASADA EN REPORTE 2025) ---
 const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], reservas: any[] }) => {
-  const ingresosCompletadas = reservas.filter(r => r.estado === 'completada').reduce((sum, r) => sum + r.total, 0)
-  const ingresosActivas = reservas.filter(r => r.estado === 'activa').reduce((sum, r) => sum + r.total, 0)
+  // 1. Helpers de Fechas para Comparativas [cite: 38]
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+  const currentYear = now.getFullYear();
+  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+
+  // Filtros de Reservas por periodo
+  const reservasMesActual = reservas.filter(r => {
+    const d = new Date(r.fecha_reserva);
+    return d.getMonth() === currentMonth && d.getFullYear() === currentYear && r.estado !== 'cancelada';
+  });
+
+  const reservasMesAnterior = reservas.filter(r => {
+    const d = new Date(r.fecha_reserva);
+    return d.getMonth() === prevMonth && d.getFullYear() === prevYear && r.estado !== 'cancelada';
+  });
+
+  // 2. CÁLCULO DE KPIs HOTELIEROS [cite: 24]
   
-  // Total proyectado (lo que ya cobraste + lo que está en curso)
-  const ingresosTotales = ingresosCompletadas + ingresosActivas;
+  // Ingresos
+  const ingresosActual = reservasMesActual.reduce((acc, r) => acc + r.total, 0);
+  const ingresosAnterior = reservasMesAnterior.reduce((acc, r) => acc + r.total, 0);
+  
+  // Ocupación (Noches vendidas vs Disponibles en el mes)
+  // Simplificado: Usamos reservas activas/completadas como proxy de ocupación
+  const ocupacionActual = (reservasMesActual.length / (habitaciones.length * 30)) * 100; // Aprox mensual
+  
+  // ADR (Average Daily Rate) = Ingresos / Habitaciones Vendidas 
+  const adrActual = reservasMesActual.length > 0 ? ingresosActual / reservasMesActual.length : 0;
+  const adrAnterior = reservasMesAnterior.length > 0 ? ingresosAnterior / reservasMesAnterior.length : 0;
 
-  const reservasActivas = reservas.filter(r => r.estado === 'activa').length
-  const totalHabitaciones = habitaciones.length
-  const habitacionesDisponibles = habitaciones.filter(h => h.estado === 'disponible').length
+  // RevPAR = ADR * Tasa Ocupación [cite: 32]
+  // O Ingresos Totales / Habitaciones Disponibles Totales
+  const revParActual = ingresosActual / (habitaciones.length * 30); // 30 días aprox
+  const revParAnterior = ingresosAnterior / (habitaciones.length * 30);
 
-  // Formateador
-  const formatMoney = (amount: number) => {
-    return amount.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0 });
-  }
+  // Tasa de Cancelación 
+  const totalReservasMes = reservas.filter(r => {
+    const d = new Date(r.fecha_reserva);
+    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+  });
+  const canceladasMes = totalReservasMes.filter(r => r.estado === 'cancelada').length;
+  const tasaCancelacion = totalReservasMes.length > 0 ? (canceladasMes / totalReservasMes.length) * 100 : 0;
 
-  // Datos para Gráfico (Suma Activas y Completadas para que veas el movimiento)
+  // Helper para tendencias (Flechas)
+  const getTrend = (actual: number, previo: number) => {
+    if (previo === 0) return { val: 100, pos: true };
+    const diff = ((actual - previo) / previo) * 100;
+    return { val: Math.abs(diff).toFixed(1), pos: diff >= 0 };
+  };
+
+  const trendIngresos = getTrend(ingresosActual, ingresosAnterior);
+  const trendRevPar = getTrend(revParActual, revParAnterior);
+
+  // Datos Gráfico Principal (Mismo que tenías, pero visualmente pulido)
   const getIngresosPorMes = () => {
     const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
     return meses.map((mes, idx) => {
       const totalMes = reservas
         .filter(r => {
            const d = new Date(r.fecha_reserva);
-           // AHORA INCLUYE 'activa' TAMBIÉN
-           const esValida = r.estado === 'completada' || r.estado === 'activa';
-           return !isNaN(d.getTime()) && esValida && d.getMonth() === idx;
+           return !isNaN(d.getTime()) && r.estado !== 'cancelada' && d.getMonth() === idx;
         })
         .reduce((acc, r) => acc + r.total, 0);
       return { name: mes, Ingresos: totalMes };
@@ -150,11 +188,12 @@ const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], 
   };
   const dataIngresos = getIngresosPorMes();
 
-  // Datos para Gráfico de Torta
+  // Datos Gráfico Torta (Tipos de Habitación - ReRTI concept [cite: 57])
   const getReservasPorTipo = () => {
     const tipos = reservas.reduce((acc: any, r: any) => {
+      if (r.estado === 'cancelada') return acc;
       const habitacion = habitaciones.find(h => h.id === r.habitacion_id);
-      const tipo = habitacion ? habitacion.tipo : 'Otras / Eliminadas'; 
+      const tipo = habitacion ? habitacion.tipo : 'Eliminada'; 
       acc[tipo] = (acc[tipo] || 0) + 1;
       return acc;
     }, {});
@@ -163,75 +202,154 @@ const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], 
   const dataTipos = getReservasPorTipo();
   const COLORS = ['#0F766E', '#2DD4BF', '#F59E0B', '#EF4444', '#6366F1', '#8B5CF6', '#94A3B8'];
 
+  // Formateador de moneda
+  const formatMoney = (amount: number) => amount.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
   return (
-    <div className="space-y-8 pb-10">
-      {/* KPIs Cards */}
+    <div className="space-y-8 pb-10 animate-in fade-in duration-500">
+      
+      {/* SECCIÓN 1: SCORECARDS (Nivel Superior Jerárquico)  */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+        
+        {/* KPI: RevPAR (El más importante según el reporte)  */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start">
-            <div><p className="text-sm font-medium text-slate-500">Ingresos Proyectados</p><h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(ingresosTotales)}</h3></div>
-            <div className="p-2 bg-teal-50 text-teal-600 rounded-lg"><DollarSign className="h-5 w-5"/></div>
+            <div>
+              <p className="text-sm font-medium text-slate-500">RevPAR (Mes Actual)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(revParActual)}</h3>
+            </div>
+            <div className="p-2 bg-teal-50 text-teal-600 rounded-lg"><TrendingUp className="h-5 w-5"/></div>
           </div>
-          <div className="mt-4 flex items-center text-xs text-slate-500"><span className="text-teal-600 font-medium mr-1">{formatMoney(ingresosActivas)}</span> en curso</div>
+          <div className={`mt-4 flex items-center text-xs ${trendRevPar.pos ? 'text-green-600' : 'text-red-600'}`}>
+            {trendRevPar.pos ? '↑' : '↓'} <span className="font-bold mx-1">{trendRevPar.val}%</span> vs mes anterior
+          </div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+
+        {/* KPI: ADR (Tarifa Promedio)  */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start">
-            <div><p className="text-sm font-medium text-slate-500">Ocupación Actual</p><h3 className="text-2xl font-bold text-slate-900 mt-1">{totalHabitaciones - habitacionesDisponibles}/{totalHabitaciones}</h3></div>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Home className="h-5 w-5"/></div>
+            <div>
+              <p className="text-sm font-medium text-slate-500">ADR (Tarifa Promedio)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(adrActual)}</h3>
+            </div>
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><DollarSign className="h-5 w-5"/></div>
           </div>
-          {totalHabitaciones > 0 && <div className="mt-4 w-full bg-slate-100 rounded-full h-1.5"><div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${((totalHabitaciones - habitacionesDisponibles) / totalHabitaciones) * 100}%` }}></div></div>}
+          <p className="mt-4 text-xs text-slate-500">Precio promedio por venta</p>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+
+        {/* KPI: Ingresos Netos [cite: 21] */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start">
-            <div><p className="text-sm font-medium text-slate-500">Reservas Activas</p><h3 className="text-2xl font-bold text-slate-900 mt-1">{reservasActivas}</h3></div>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><Calendar className="h-5 w-5"/></div>
+            <div>
+              <p className="text-sm font-medium text-slate-500">Ingresos (Mes)</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(ingresosActual)}</h3>
+            </div>
+            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><BarChart3 className="h-5 w-5"/></div>
           </div>
-          <p className="mt-4 text-xs text-slate-500">Huéspedes en el hotel</p>
+          <div className={`mt-4 flex items-center text-xs ${trendIngresos.pos ? 'text-green-600' : 'text-red-600'}`}>
+            {trendIngresos.pos ? '↑' : '↓'} <span className="font-bold mx-1">{trendIngresos.val}%</span> vs mes anterior
+          </div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+
+        {/* KPI: Tasa de Cancelación  */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start">
-            <div><p className="text-sm font-medium text-slate-500">Disponibilidad Hoy</p><h3 className="text-2xl font-bold text-slate-900 mt-1">{habitacionesDisponibles}</h3></div>
-            <div className="p-2 bg-green-50 text-green-600 rounded-lg"><CheckCircle className="h-5 w-5"/></div>
+            <div>
+              <p className="text-sm font-medium text-slate-500">Tasa Cancelación</p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">{tasaCancelacion.toFixed(1)}%</h3>
+            </div>
+            <div className={`p-2 rounded-lg ${tasaCancelacion > 20 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+              <AlertCircle className="h-5 w-5"/>
+            </div>
           </div>
-          <p className="mt-4 text-xs text-slate-500">Habitaciones libres</p>
+           {/* Lógica de alerta sugerida por el reporte [cite: 84] */}
+          <p className="mt-4 text-xs text-slate-500">
+            {tasaCancelacion > 20 ? '⚠️ Revisar políticas' : 'Nivel saludable'}
+          </p>
         </div>
       </div>
 
-      {/* GRÁFICOS */}
+      {/* SECCIÓN 2: GRÁFICOS INTERMEDIOS (Drill-down visual) [cite: 9] */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Gráfico de Evolución de Ingresos */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><BarChart3 className="h-5 w-5 text-teal-600" /> Ingresos (Completados + Activos)</h3>
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-teal-600" /> Evolución Anual de Ingresos
+          </h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataIngresos}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
-                <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(value: number) => [formatMoney(value), 'Ingresos']} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val/1000}k`} />
+                <Tooltip 
+                  cursor={{ fill: '#f1f5f9' }} 
+                  formatter={(value: number) => [formatMoney(value), 'Ingresos']} 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} 
+                />
                 <Bar dataKey="Ingresos" fill="#0F766E" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
+        {/* Gráfico de Distribución por Tipo */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><PieIcon className="h-5 w-5 text-teal-600" /> Preferencias de Clientes</h3>
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <PieIcon className="h-5 w-5 text-teal-600" /> Distribución de Demanda (ReRTI)
+          </h3>
           <div className="h-[300px] w-full">
             {dataTipos.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={dataTipos} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                    {dataTipos.map((entry:any, index:number) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
+                  <Pie 
+                    data={dataTipos} 
+                    cx="50%" 
+                    cy="50%" 
+                    innerRadius={60} 
+                    outerRadius={80} 
+                    paddingAngle={5} 
+                    dataKey="value"
+                  >
+                    {dataTipos.map((entry:any, index:number) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
                   </Pie>
                   <Tooltip />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{fontSize: '12px'}} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400"><PieIcon className="h-10 w-10 mb-2 opacity-20" /><p>No hay datos de reservas aún</p></div>
+              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                <PieIcon className="h-10 w-10 mb-2 opacity-20" />
+                <p>Insuficientes datos</p>
+              </div>
             )}
           </div>
         </div>
+      </div>
+
+      {/* SECCIÓN 3: OPERATIVO (Nivel Inferior) [cite: 11] */}
+      {/* Alertas rápidas sobre estado físico del hotel */}
+      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex justify-between items-center">
+        <div className="flex gap-3 items-center">
+            <div className="bg-orange-100 p-2 rounded-full text-orange-600">
+                <RefreshCw className="h-5 w-5" />
+            </div>
+            <div>
+                <h4 className="font-bold text-orange-900">Estado de Habitaciones</h4>
+                <p className="text-sm text-orange-700">
+                    {habitaciones.filter(h => h.estado === 'mantenimiento').length} habitaciones en mantenimiento hoy.
+                </p>
+            </div>
+        </div>
+        <button 
+            onClick={() => document.getElementById('tab-habitaciones')?.click()} // Hack simple para navegar
+            className="text-sm font-bold text-orange-700 hover:underline px-3"
+        >
+            Ver Inventario →
+        </button>
       </div>
     </div>
   )
