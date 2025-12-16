@@ -217,37 +217,49 @@ export const UsuarioDashboard = () => {
                 <Clock className="h-5 w-5 text-slate-400" /> Historial de Reservas
             </h2>
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-50 text-slate-500 font-medium">
-                    <tr>
-                        <th className="px-4 py-3">Fecha</th>
-                        <th className="px-4 py-3">Habitación</th>
-                        <th className="px-4 py-3">Estado</th>
-                        <th className="px-4 py-3 text-right">Total</th>
-                    </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                    {historialReservas.map(r => {
-                        const hab = habitaciones.find(h => h.id === r.habitacion_id)
-                        return (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                            <td className="px-4 py-3 text-slate-600">{new Date(r.fecha_reserva).toLocaleDateString()}</td>
-                            <td className="px-4 py-3 font-medium text-slate-800">{hab ? `Hab. ${hab.numero}` : 'N/A'}</td>
-                            <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${r.estado === 'completada' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                                {r.estado}
-                            </span>
-                            </td>
-                            <td className="px-4 py-3 text-right text-slate-600">${r.total.toLocaleString()}</td>
+                
+                {/* --- CAMBIO AQUÍ: Wrapper para Scroll Horizontal --- */}
+                <div className="overflow-x-auto w-full">
+                    <table className="w-full text-sm text-left min-w-[600px]"> {/* min-w evita que se aplaste */}
+                        <thead className="bg-slate-50 text-slate-500 font-medium">
+                        <tr>
+                            <th className="px-4 py-3 whitespace-nowrap">Fecha</th>
+                            <th className="px-4 py-3 whitespace-nowrap">Habitación</th>
+                            <th className="px-4 py-3 whitespace-nowrap">Estado</th>
+                            <th className="px-4 py-3 text-right whitespace-nowrap">Total</th>
                         </tr>
-                        )
-                    })}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                        {historialReservas.map(r => {
+                            const hab = habitaciones.find(h => h.id === r.habitacion_id)
+                            return (
+                            <tr key={r.id} className="hover:bg-slate-50">
+                                <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                                    {new Date(r.fecha_reserva).toLocaleDateString()}
+                                </td>
+                                <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">
+                                    {hab ? `Hab. ${hab.numero}` : 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${r.estado === 'completada' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                                    {r.estado}
+                                </span>
+                                </td>
+                                <td className="px-4 py-3 text-right text-slate-600 whitespace-nowrap">
+                                    ${r.total.toLocaleString()}
+                                </td>
+                            </tr>
+                            )
+                        })}
+                        </tbody>
+                    </table>
+                </div>
+                {/* ----------------------------------------------- */}
+
             </div>
             </section>
         )}
-
+        
         {/* Habitaciones Disponibles con Filtros */}
         <section className="mb-12" id="reservar">
           <div className="flex flex-col md:flex-row justify-between items-end mb-6 gap-4">

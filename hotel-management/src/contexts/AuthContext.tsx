@@ -1,135 +1,138 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Usuario } from '@/types'
 
+// 1. Definimos qué forma tiene nuestro contexto (incluyendo las funciones que faltaban)
 interface AuthContextType {
-  user: Usuario | null
-  token: string | null
+  user: any | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
-  loginWithGoogle: () => Promise<void>
-  register: (email: string, password: string, nombre: string) => Promise<void>
-  logout: () => void
+  signIn: (email: string, password: string) => Promise<void>
+  signUp: (email: string, password: string, nombre: string) => Promise<void>
+  signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = createContext<AuthContextType>({} as AuthContextType)
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (!context) throw new Error('useAuth debe usarse dentro de AuthProvider')
-  return context
+  return useContext(AuthContext)
 }
 
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<Usuario | null>(null)
-  const [token, setToken] = useState<string | null>(null)
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 1. Cargar sesión existente (si recarga la página)
-    const savedUser = localStorage.getItem('hotel_user')
-    const savedToken = localStorage.getItem('hotel_token')
-    
-    if (savedUser && savedToken) {
-      setUser(JSON.parse(savedUser))
-      setToken(savedToken)
-    }
-    setLoading(false)
+    // Verificar sesión actual al cargar
+    checkUser()
 
-    // 2. DETECTAR LOGIN DE GOOGLE (La Magia)
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        setLoading(true)
-        try {
-          // ¡Llamamos al PUENTE que creamos!
-          const { data, error } = await supabase.functions.invoke('auth-google-sync', {
-            body: { 
-              email: session.user.email,
-              nombre: session.user.user_metadata.full_name,
-              google_token: session.access_token 
-            }
-          })
-
-          if (error) throw error
-          
-          // Guardamos el usuario de NUESTRA tabla
-          const appUser = data.user
-          
-          setUser(appUser)
-          setToken(session.access_token)
-          
-          localStorage.setItem('hotel_user', JSON.stringify(appUser))
-          localStorage.setItem('hotel_token', session.access_token)
-          
-        } catch (error) {
-          console.error('Error sincronizando Google:', error)
-          supabase.auth.signOut() // Si falla, lo sacamos
-        } finally {
-          setLoading(false)
-        }
+    // Escuchar cambios (login, logout, etc.)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        await fetchUserProfile(session.user.id, session.user.email)
+      } else {
+        setUser(null)
+        setLoading(false)
       }
     })
 
     return () => {
-      authListener.subscription.unsubscribe()
+      subscription.unsubscribe()
     }
   }, [])
 
-  const login = async (email: string, password: string) => {
-    // ... (Tu lógica de login normal, sin cambios) ...
+  const checkUser = async () => {
     try {
-      const { data, error } = await supabase.functions.invoke('auth-login', { body: { email, password } })
-      if (error) throw error
-      const responseData = data?.data || data
-      
-      setUser(responseData.user)
-      setToken(responseData.token)
-      localStorage.setItem('hotel_user', JSON.stringify(responseData.user))
-      localStorage.setItem('hotel_token', responseData.token)
-    } catch (error: any) {
-      throw new Error(error.message || 'Error al iniciar sesión')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        await fetchUserProfile(session.user.id, session.user.email)
+      } else {
+        setLoading(false)
+      }
+    } catch (error) {
+      console.error(error)
+      setLoading(false)
     }
   }
 
-  // --- LA FUNCIÓN QUE LLAMA EL BOTÓN ---
-  const loginWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        // IMPORTANTE: Esto redirige de vuelta a tu página
-        redirectTo: window.location.origin 
+  // Busca los datos extra (rol, nombre) en la tabla 'usuarios'
+  const fetchUserProfile = async (userId: string, email: string | undefined) => {
+    try {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('id', userId)
+        .single()
+
+      if (error || !data) {
+        // Si el usuario existe en Auth pero no en la tabla pública (raro, pero posible)
+        console.warn("Usuario no encontrado en tabla publica, usando datos básicos")
+        setUser({ id: userId, email: email, rol: 'usuario', nombre: 'Usuario' }) // Fallback
+      } else {
+        setUser(data)
       }
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // --- FUNCIÓN SIGN IN (LOGIN) ---
+  const signIn = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     })
     if (error) throw error
   }
 
-  const register = async (email: string, password: string, nombre: string) => {
-     // ... (Tu lógica de registro normal, sin cambios) ...
-     try {
-      const { data, error } = await supabase.functions.invoke('auth-register', { body: { email, password, nombre } })
-      if (error) throw error
-      const responseData = data?.data || data
+  // --- FUNCIÓN SIGN UP (REGISTRO) ---
+  const signUp = async (email: string, password: string, nombre: string) => {
+    // 1. Crear usuario en Auth de Supabase
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { nombre } // Guardamos el nombre en la metadata por si acaso
+      }
+    })
+    if (error) throw error
+
+    // 2. Insertar en nuestra tabla pública 'usuarios'
+    // (Esto es necesario si no tienes un Trigger automático en la base de datos)
+    if (data.user) {
+      const { error: dbError } = await supabase.from('usuarios').insert([
+        {
+          id: data.user.id,
+          email: email,
+          nombre: nombre,
+          rol: 'usuario' // Rol por defecto
+        }
+      ])
       
-      setUser(responseData.user)
-      setToken(responseData.token)
-      localStorage.setItem('hotel_user', JSON.stringify(responseData.user))
-      localStorage.setItem('hotel_token', responseData.token)
-    } catch (error: any) {
-      throw new Error(error.message || 'Error al registrarse')
+      // Si falla la inserción en DB pública, es crítico (pero si ya tienes un Trigger, esto dará error de duplicado que podemos ignorar)
+      if (dbError && !dbError.message.includes('duplicate')) {
+         console.error("Error creando perfil público:", dbError)
+      }
     }
   }
 
-  const logout = async () => {
-    await supabase.auth.signOut() // Cerrar sesión de Google
+  // --- FUNCIÓN SIGN OUT (SALIR) ---
+  const signOut = async () => {
+    await supabase.auth.signOut()
     setUser(null)
-    setToken(null)
-    localStorage.removeItem('hotel_user')
-    localStorage.removeItem('hotel_token')
+  }
+
+  const value = {
+    user,
+    loading,
+    signIn, // <--- Ahora sí las exportamos
+    signUp, // <--- Ahora sí las exportamos
+    signOut // <--- Ahora sí las exportamos
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, loginWithGoogle, register, logout }}>
-      {children}
+    <AuthContext.Provider value={value}>
+      {!loading && children}
     </AuthContext.Provider>
   )
 }
