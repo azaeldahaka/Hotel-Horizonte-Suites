@@ -20,29 +20,37 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 1. Obtener sesión inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        fetchUserProfile(session.user)
-      } else {
+    // Verificación inicial
+    const initSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          await fetchUserProfile(session.user)
+        } else {
+          setLoading(false)
+        }
+      } catch (error) {
         setLoading(false)
       }
-    })
+    }
 
-    // 2. Escuchar cambios (Login, Logout, etc.) automáticamente
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    initSession()
+
+    // Escuchar cambios
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
-        fetchUserProfile(session.user)
+        await fetchUserProfile(session.user)
       } else {
         setUser(null)
         setLoading(false)
       }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
-  // Esta función busca los datos extra (rol, nombre) PERO no bloquea si falla
   const fetchUserProfile = async (authUser: any) => {
     try {
       const { data, error } = await supabase
@@ -51,60 +59,61 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .eq('id', authUser.id)
         .single()
 
-      if (error || !data) {
-        console.warn("No se pudo cargar perfil extendido, usando datos básicos.")
-        // Fallback: Usamos los datos básicos de la cuenta para que puedas entrar igual
+      if (data && !error) {
+        setUser(data)
+      } else {
+        // Fallback
         setUser({
           id: authUser.id,
           email: authUser.email,
           nombre: authUser.user_metadata?.nombre || 'Usuario',
-          rol: 'usuario' // Rol por defecto de seguridad
+          rol: 'usuario'
         })
-      } else {
-        setUser(data)
       }
-    } catch (err) {
-      console.error("Error crítico leyendo perfil:", err)
+    } catch (error) {
+      console.error(error)
     } finally {
       setLoading(false)
     }
   }
 
-  // --- SIGN IN (LOGIN) ---
   const signIn = async (email: string, password: string) => {
-    // Solo hacemos el login. El "onAuthStateChange" de arriba se encargará de actualizar el usuario.
     const { error } = await supabase.auth.signInWithPassword({
       email,
-      password,
+      password
     })
     if (error) throw error
   }
 
-  // --- SIGN UP (REGISTRO) ---
+  // --- AQUÍ ESTABA EL ERROR, YA ESTÁ CORREGIDO ---
   const signUp = async (email: string, password: string, nombre: string) => {
+    // 1. Crear en Auth
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { nombre } }
     })
-    
     if (error) throw error
 
-    // Intentamos crear el registro en la tabla pública
+    // 2. Crear en Tabla Usuarios (CORREGIDO: Sin usar .catch directo)
     if (data.user) {
-        await supabase.from('usuarios').insert([{
-            id: data.user.id,
-            email: email,
-            nombre: nombre,
-            rol: 'usuario'
-        }])
+      const { error: dbError } = await supabase.from('usuarios').insert([{
+        id: data.user.id,
+        email: email,
+        nombre: nombre,
+        rol: 'usuario'
+      }])
+      
+      // Manejo de error manual en lugar de .catch()
+      if (dbError) {
+        console.log('Error creando perfil DB (posible duplicado o trigger):', dbError.message)
+      }
     }
   }
 
-  // --- SIGN OUT (SALIR) ---
   const signOut = async () => {
     await supabase.auth.signOut()
-    // No necesitamos setUser(null) aquí, el listener lo hará solo
+    setUser(null)
   }
 
   const value = {
