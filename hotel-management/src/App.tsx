@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { Navbar } from './components/Navbar'
-// Importamos el Footer
 import { Footer } from './components/Footer' 
 import { Home } from './pages/Home'
 import { Login } from './pages/Login'
@@ -13,11 +12,16 @@ import { OperadorDashboard } from './pages/operador/OperadorDashboard'
 import { AdminDashboard } from './pages/admin/AdminDashboard'
 import { MiPerfil } from './pages/MiPerfil'
 import { Nosotros } from './pages/Nosotros'
+// CORRECCIÓN: Importación sin llaves porque es un export default
+import ScrollToTop from './components/ScrollToTop';
 
 function App() {
   return (
     <AuthProvider>
       <Router>
+        {/* --- AQUÍ ESTÁ LA MAGIA: Esto resetea el scroll al navegar --- */}
+        <ScrollToTop />
+
         <div className="min-h-screen bg-slate-50 flex flex-col">
           {/* La Navbar siempre visible arriba */}
           <Navbar />
@@ -29,6 +33,7 @@ function App() {
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/nosotros" element={<Nosotros />} />
               
               {/* --- RUTAS PROTEGIDAS --- */}
               
@@ -74,14 +79,11 @@ function App() {
               
               {/* --- RUTA POR DEFECTO --- */}
               <Route path="*" element={<Navigate to="/" replace />} />
-
-              <Route path="/nosotros" element={<Nosotros />} />
               
             </Routes>
           </div>
 
-          {/* --- FOOTER (¡AQUÍ ESTÁ EL ARREGLO!) --- */}
-          {/* Está AFUERA de <Routes> pero DENTRO del Router */}
+          {/* Footer siempre abajo */}
           <Footer /> 
           
         </div>
@@ -103,7 +105,7 @@ const ProtectedRoute = ({
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-amber-600"></div>
+        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-teal-600"></div>
       </div>
     )
   }
