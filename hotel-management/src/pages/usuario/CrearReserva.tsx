@@ -4,10 +4,9 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion } from '@/types'
 import { Calendar, CreditCard, AlertCircle, CheckCircle, Loader2, Clock, ShieldCheck, ArrowRight, Wifi } from 'lucide-react'
-// CORRECCIÓN 1: La ruta correcta es logger (singular)
-import { logActividad } from '@/utils/loggers'
+import { logActividad } from '@/utils/loggers' // <--- Ruta correcta en singular
 
-// Función auxiliar para fecha local
+// Función auxiliar para fecha local (YYYY-MM-DD)
 const getTodayLocalString = () => {
   const hoy = new Date();
   const y = hoy.getFullYear();
@@ -41,7 +40,7 @@ export const CrearReserva = () => {
   const [total, setTotal] = useState(0)
   const [noches, setNoches] = useState(0)
 
-  // --- MÁSCARAS DE INPUT (Tu lógica visual) ---
+  // --- MÁSCARAS DE INPUT ---
   const handleCardNumber = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value.replace(/\D/g, '').substring(0, 16);
     val = val.replace(/(\d{4})(?=\d)/g, '$1 ');
@@ -77,7 +76,6 @@ export const CrearReserva = () => {
     } catch (e) { return getTodayLocalString(); }
   }
 
-  // Carga inicial y protección de ruta
   useEffect(() => {
     if (!authLoading) {
       if (!user) {
@@ -97,7 +95,7 @@ export const CrearReserva = () => {
       const { data, error } = await supabase.from('habitaciones').select('*').eq('id', id).maybeSingle()
       if (error) throw error
       if (data) setHabitacion(data)
-      else navigate('/usuario/dashboard') // Si no existe ID, volver
+      else navigate('/usuario/dashboard')
     } catch (error) { 
       console.error('Error cargando habitación:', error) 
     }
@@ -120,33 +118,45 @@ export const CrearReserva = () => {
     }
   }
 
+  // --- SOLUCIÓN: VALIDACIÓN DIRECTA EN TABLA (SIN EDGE FUNCTION) ---
   const validarDisponibilidad = async () => {
     setError('')
     setLoading(true)
     try {
+      // 1. Validaciones básicas
       if (!fechaEntrada || !fechaSalida) throw new Error('Selecciona las fechas.')
       if (new Date(fechaSalida) <= new Date(fechaEntrada)) throw new Error('La salida debe ser posterior a la entrada.')
       if (numHuespedes < 1 || numHuespedes > (habitacion?.capacidad || 1)) throw new Error(`Máximo ${habitacion?.capacidad} huéspedes.`)
 
-      // CORRECCIÓN 2: Manejo seguro de la Edge Function
-      // Si la función no existe o falla, asumimos disponibilidad por ahora (para no bloquear el examen)
-      // O puedes descomentar el throw error si tienes la función desplegada.
-      try {
-        const { data, error } = await supabase.functions.invoke('check-room-availability', {
-            body: { habitacion_id: id, fecha_entrada: fechaEntrada, fecha_salida: fechaSalida }
-        })
-        if (error) {
-            console.warn("No se pudo verificar disponibilidad estricta (Edge Function), continuando...", error)
-        } else if (data && !data.available) {
-            throw new Error('Habitación no disponible en esas fechas.')
-        }
-      } catch (availabilityError: any) {
-          // Si es nuestro error manual, lo relanzamos
-          if (availabilityError.message === 'Habitación no disponible en esas fechas.') throw availabilityError;
-          console.warn("Saltando verificación estricta de disponibilidad")
+      // 2. Traer todas las reservas ACTIVAS de esta habitación
+      const { data: reservasExistentes, error } = await supabase
+        .from('reservas')
+        .select('fecha_entrada, fecha_salida')
+        .eq('habitacion_id', id)
+        .neq('estado', 'cancelada') // Ignoramos las canceladas
+
+      if (error) throw error
+
+      // 3. Comprobar superposición de fechas MANUALMENTE (Infalible)
+      // Lógica: Hay conflicto si (NuevaEntrada < ViejaSalida) Y (NuevaSalida > ViejaEntrada)
+      
+      const nuevaEntradaMs = new Date(`${fechaEntrada}T${horaEntrada}`).getTime();
+      const nuevaSalidaMs = new Date(`${fechaSalida}T${horaSalida}`).getTime();
+
+      const hayConflicto = reservasExistentes?.some((res: any) => {
+        const resEntradaMs = new Date(res.fecha_entrada).getTime();
+        const resSalidaMs = new Date(res.fecha_salida).getTime();
+        
+        return (nuevaEntradaMs < resSalidaMs && nuevaSalidaMs > resEntradaMs);
+      });
+
+      if (hayConflicto) {
+        throw new Error('Lo sentimos, esta habitación ya está reservada en esas fechas.')
       }
 
+      // Si pasa, avanzamos
       setPaso('pago')
+
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -183,18 +193,15 @@ export const CrearReserva = () => {
       if (rError) throw rError
       const reservaId = reservaData[0]?.id
 
-      // 2. Insertar Pago (Opcional, no bloqueante si falla esto)
-      const { error: pError } = await supabase.from('pagos').insert([{ 
+      // 2. Insertar Pago
+      await supabase.from('pagos').insert([{ 
         reserva_id: reservaId, 
         monto: total, 
         metodo_pago: metodoPago, 
         estado: 'completado' 
       }])
       
-      if (pError) console.error("Error guardando registro de pago", pError)
-
       // 3. Actualizar Habitación
-      // (Si tienes el Trigger SQL activado, esto es redundante pero seguro)
       await supabase.from('habitaciones').update({ estado: 'ocupada' }).eq('id', id)
 
       // 4. Log de Actividad
@@ -205,7 +212,7 @@ export const CrearReserva = () => {
         'success'
       );
 
-      // 5. Enviar Email (NON-BLOCKING: Si falla, no mostramos error al usuario)
+      // 5. Enviar Email (Intento silencioso)
       supabase.functions.invoke('send-email', {
         body: {
           email: user.email,
@@ -220,9 +227,7 @@ export const CrearReserva = () => {
             total: total.toLocaleString('es-ES')
           }
         }
-      }).then(({ error }) => {
-         if (error) console.warn("No se pudo enviar el email de confirmación", error)
-      });
+      }).catch(e => console.log("No se pudo enviar email", e));
 
       setPaso('confirmacion')
 
