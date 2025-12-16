@@ -2,10 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Habitacion, Usuario, Reserva, TipoHabitacion, Amenidad, Servicio, Actividad } from '@/types'
-// 1. CORRECCIÓN: Agregados 'User' y 'Save' a los imports
-import { Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, TrendingDown, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, ClipboardList, Clock, PieChart as PieIcon, User } from 'lucide-react'
+import { Home, Users, BarChart3, Plus, Edit, Trash2, X, Save, TrendingUp, TrendingDown, DollarSign, Calendar, Filter, AlertCircle, RefreshCw, XCircle, CheckCircle, Coffee, Shield, ClipboardList, Clock, PieChart as PieIcon, User, Search, ArrowRight } from 'lucide-react'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend } from 'recharts'
-// 2. CORRECCIÓN: Importar el logger
 import { logActividad } from '@/utils/loggers'
 
 export const AdminDashboard = () => {
@@ -31,6 +29,9 @@ export const AdminDashboard = () => {
   const cargarDatos = async () => {
     if (habitaciones.length === 0) setLoading(true);
     try {
+      // Limpieza automática de reservas vencidas
+      await supabase.rpc('actualizar_reservas_vencidas');
+
       const [habResult, opResult, resResult, cliResult, servResult, tiposResult, amenidadesResult, logResult] = await Promise.all([
         supabase.from('habitaciones').select('*').order('numero'),
         supabase.from('usuarios').select('*').eq('rol', 'operador').order('nombre'),
@@ -39,7 +40,8 @@ export const AdminDashboard = () => {
         supabase.from('servicios').select('*').order('nombre'),
         supabase.from('tipos_habitacion').select('*').order('nombre'),
         supabase.from('amenidades').select('*').order('nombre'),
-        supabase.from('historial_actividad').select('*, usuarios(nombre)').order('created_at', { ascending: false }).limit(50)
+        // Cargamos más registros para que los filtros funcionen mejor (100 últimos)
+        supabase.from('historial_actividad').select('*, usuarios(nombre, email, rol)').order('created_at', { ascending: false }).limit(100)
       ]);
       
       setHabitaciones(habResult.data || [])
@@ -70,7 +72,7 @@ export const AdminDashboard = () => {
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Panel de Administrador</h1>
+          <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Panel de Control</h1>
           <p className="text-slate-600">Gestión integral de Horizonte Suites</p>
         </div>
 
@@ -98,20 +100,10 @@ export const AdminDashboard = () => {
         </div>
 
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {activeTab === 'habitaciones' && <GestionHabitaciones habitaciones={habitaciones} tipos={tiposHabitacion} amenidadesDisponibles={amenidades} onRecargar={cargarDatos} />}
-          {activeTab === 'servicios' && <GestionServicios servicios={servicios} onRecargar={cargarDatos} />}
-          
-          {/* 3. CORRECCIÓN: Pasamos servicios y actividades a GestionReservas */}
-          {activeTab === 'reservas' && <GestionReservas 
-              reservas={reservas} 
-              habitaciones={habitaciones} 
-              clientes={clientes} 
-              servicios={servicios} 
-              actividades={actividades}
-              onRecargar={cargarDatos} 
-          />}
-          
-          {activeTab === 'operadores' && <GestionOperadores operadores={operadores} onRecargar={cargarDatos} />}
+          {activeTab === 'habitaciones' && <GestionHabitaciones habitaciones={habitaciones} tipos={tiposHabitacion} amenidadesDisponibles={amenidades} onRecargar={cargarDatos} user={user} />}
+          {activeTab === 'servicios' && <GestionServicios servicios={servicios} onRecargar={cargarDatos} user={user} />}
+          {activeTab === 'reservas' && <GestionReservas reservas={reservas} habitaciones={habitaciones} clientes={clientes} servicios={servicios} actividades={actividades} onRecargar={cargarDatos} user={user} />}
+          {activeTab === 'operadores' && <GestionOperadores operadores={operadores} onRecargar={cargarDatos} user={user} />}
           {activeTab === 'estadisticas' && <Estadisticas habitaciones={habitaciones} reservas={reservas} />}
           {activeTab === 'historial' && <GestionHistorial actividades={actividades} onRecargar={cargarDatos} />}
         </div>
@@ -120,8 +112,122 @@ export const AdminDashboard = () => {
   )
 }
 
-// --- GESTIÓN DE RESERVAS ---
-const GestionReservas = ({ reservas, habitaciones, clientes, servicios, actividades, onRecargar }: any) => {
+// --- GESTIÓN DE HISTORIAL AVANZADO (Con Filtros) ---
+const GestionHistorial = ({ actividades, onRecargar }: { actividades: any[], onRecargar: () => void }) => {
+  const [filtroTexto, setFiltroTexto] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState('todos');
+  const [filtroFecha, setFiltroFecha] = useState('');
+
+  // Lógica de filtrado en cliente (para rapidez)
+  const logsFiltrados = actividades.filter(log => {
+    const cumpleTexto = 
+      log.accion.toLowerCase().includes(filtroTexto.toLowerCase()) || 
+      log.detalles?.toLowerCase().includes(filtroTexto.toLowerCase()) ||
+      log.usuarios?.nombre.toLowerCase().includes(filtroTexto.toLowerCase());
+    
+    const cumpleTipo = filtroTipo === 'todos' ? true : log.tipo === filtroTipo;
+    
+    const cumpleFecha = filtroFecha ? new Date(log.created_at).toISOString().split('T')[0] === filtroFecha : true;
+
+    return cumpleTexto && cumpleTipo && cumpleFecha;
+  });
+
+  return (
+    <div>
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Log de Actividad</h2>
+          <p className="text-sm text-slate-500">Auditoría de acciones de usuarios y sistema</p>
+        </div>
+        <button onClick={onRecargar} className="p-2 text-slate-500 hover:text-teal-600 bg-white border border-slate-200 rounded-lg shadow-sm">
+          <RefreshCw className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* BARRA DE FILTROS DEL LOG */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="relative md:col-span-2">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400"/>
+          <input 
+            type="text" 
+            placeholder="Buscar usuario, acción o detalle..." 
+            className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-teal-500"
+            value={filtroTexto}
+            onChange={e => setFiltroTexto(e.target.value)}
+          />
+        </div>
+        <div>
+          <select 
+            className="w-full py-2 px-3 border border-slate-300 rounded-lg text-sm outline-none bg-white"
+            value={filtroTipo}
+            onChange={e => setFiltroTipo(e.target.value)}
+          >
+            <option value="todos">Todos los tipos</option>
+            <option value="success">✅ Exitosos (Creación/Pagos)</option>
+            <option value="warning">⚠️ Modificaciones/Cambios</option>
+            <option value="alert">❌ Eliminaciones/Alertas</option>
+            <option value="info">ℹ️ Información General</option>
+          </select>
+        </div>
+        <div>
+          <input 
+            type="date" 
+            className="w-full py-2 px-3 border border-slate-300 rounded-lg text-sm outline-none"
+            value={filtroFecha}
+            onChange={e => setFiltroFecha(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        {logsFiltrados.length === 0 ? (
+          <div className="p-12 text-center text-slate-400">
+            <ClipboardList className="h-12 w-12 mx-auto mb-3 opacity-20"/>
+            <p>No se encontraron registros con esos filtros.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {logsFiltrados.map((log) => (
+              <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors flex flex-col sm:flex-row items-start gap-4">
+                <div className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 
+                  ${log.tipo === 'success' ? 'bg-emerald-500' : 
+                    log.tipo === 'warning' ? 'bg-amber-500' : 
+                    log.tipo === 'alert' ? 'bg-red-500' : 'bg-blue-500'}`} 
+                />
+                
+                <div className="flex-1 w-full">
+                  <div className="flex justify-between items-start mb-1">
+                    <h3 className="text-sm font-bold text-slate-800">{log.accion}</h3>
+                    <span className="text-xs text-slate-400 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                      <Clock className="h-3 w-3" />
+                      {new Date(log.created_at).toLocaleString('es-AR')}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600 mb-2">{log.detalles}</p>
+                  
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-500">
+                      <User className="h-3 w-3" />
+                      {log.usuarios?.nombre || 'Sistema'}
+                    </span>
+                    {log.usuarios?.rol && (
+                      <span className="text-[10px] text-slate-400 uppercase border border-slate-200 px-1.5 rounded">
+                        {log.usuarios.rol}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- GESTIÓN DE RESERVAS (CON LOG ACTIVADO) ---
+const GestionReservas = ({ reservas, habitaciones, clientes, servicios, actividades, onRecargar, user }: any) => {
   const [fechaInicio, setFIni] = useState(''); 
   const [fechaFin, setFFin] = useState(''); 
   const [fNombre, setFNom] = useState(''); 
@@ -153,29 +259,38 @@ const GestionReservas = ({ reservas, habitaciones, clientes, servicios, activida
   }, [reservas, fechaInicio, fechaFin, fNombre, fTipo, fEstadoHab, clientes, habitaciones]);
 
   const handleLimpiar = () => { setFIni(''); setFFin(''); setFNom(''); setFTipo(''); setFEstadoHab(''); }; 
-  const handleOp = async (id:string, op:string) => { if(confirm(`¿Estás seguro de marcar como ${op}?`)) { await supabase.from('reservas').update({estado:op}).eq('id', id); onRecargar(); }};
+  
+  // --- FUNCIÓN QUE HACE EL LOG ---
+  const handleOp = async (id:string, op:string) => { 
+    if(!confirm(`¿Estás seguro de marcar como ${op}?`)) return;
+    try {
+      const { error } = await supabase.from('reservas').update({estado:op}).eq('id', id);
+      if (error) throw error;
+      
+      // LOGUEAR ACCIÓN
+      await logActividad(
+        user?.id, 
+        `Cambio Estado Reserva`, 
+        `Reserva ${id.slice(0,8)} actualizada a estado: ${op.toUpperCase()}`, 
+        op === 'cancelada' ? 'alert' : 'success'
+      );
+
+      onRecargar(); 
+    } catch(err:any) { 
+      alert("Error: " + err.message); 
+    }
+  };
 
   return ( 
     <div> 
       <div className="bg-white p-4 rounded-lg shadow-sm mb-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-end border border-slate-200"> 
+        {/* ... (Filtros visuales igual que antes) ... */}
         <div><label className="text-sm font-medium text-slate-700 mb-1">Desde</label><input type="date" value={fechaInicio} onChange={e=>setFIni(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"/></div> 
         <div><label className="text-sm font-medium text-slate-700 mb-1">Hasta</label><input type="date" value={fechaFin} onChange={e=>setFFin(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"/></div> 
         <div><label className="text-sm font-medium text-slate-700 mb-1">Huésped</label><input placeholder="Buscar..." value={fNombre} onChange={e=>setFNom(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"/></div> 
         <div><label className="text-sm font-medium text-slate-700 mb-1">Tipo</label><select value={fTipo} onChange={e=>setFTipo(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"><option value="">Todos</option>{tiposDeHabitacion.map((t:any)=><option key={t} value={t}>{t}</option>)}</select></div> 
-        <div>
-            <label className="text-sm font-medium text-slate-700 mb-1">Estado Hab.</label>
-            <select value={fEstadoHab} onChange={e=>setFEstadoHab(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg bg-white">
-                <option value="">Cualquiera</option>
-                <option value="disponible">Disponible</option>
-                <option value="ocupada">Ocupada</option>
-                <option value="mantenimiento">Mantenimiento</option>
-            </select>
-        </div>
-        <div className="md:col-span-5 flex gap-2">
-            <button onClick={handleLimpiar} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-medium transition-colors flex items-center gap-2">
-                <Filter className="h-4 w-4"/> Limpiar Filtros
-            </button>
-        </div> 
+        <div><label className="text-sm font-medium text-slate-700 mb-1">Estado Hab.</label><select value={fEstadoHab} onChange={e=>setFEstadoHab(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg bg-white"><option value="">Cualquiera</option><option value="disponible">Disponible</option><option value="ocupada">Ocupada</option><option value="mantenimiento">Mantenimiento</option></select></div>
+        <div className="md:col-span-5 flex gap-2"><button onClick={handleLimpiar} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-medium transition-colors flex items-center gap-2"><Filter className="h-4 w-4"/> Limpiar Filtros</button></div> 
       </div> 
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6"> 
@@ -185,31 +300,14 @@ const GestionReservas = ({ reservas, habitaciones, clientes, servicios, activida
           return ( 
             <div key={r.id} className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow"> 
               <div className="flex justify-between items-start mb-2"> 
-                <div>
-                    <h3 className="font-bold text-lg text-slate-900">{c?.nombre || `ID: ${r.usuario_id.slice(0,8)}`}</h3>
-                    <p className="text-sm text-slate-500">{c?.email || 'Email no disponible'}</p>
-                </div> 
+                <div><h3 className="font-bold text-lg text-slate-900">{c?.nombre || `ID: ${r.usuario_id.slice(0,8)}`}</h3><p className="text-sm text-slate-500">{c?.email || 'Email no disponible'}</p></div> 
                 <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${r.estado==='activa'?'bg-green-100 text-green-800':r.estado==='completada'?'bg-blue-100 text-blue-800':'bg-red-100 text-red-800'}`}>{r.estado}</span> 
               </div> 
               <div className="flex items-center gap-2 mb-2">
                   <p className="font-semibold text-slate-700">{h ? `Habitación ${h.numero} (${h.tipo})` : 'Habitación eliminada'}</p>
-                  {h && (
-                      <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
-                          h.estado === 'disponible' ? 'bg-green-50 text-green-600 border-green-200' : 
-                          h.estado === 'ocupada' ? 'bg-amber-50 text-amber-600 border-amber-200' : 
-                          'bg-rose-50 text-rose-600 border-rose-200'
-                      }`}>
-                          {h.estado}
-                      </span>
-                  )}
+                  {h && (<span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${h.estado === 'disponible' ? 'bg-green-50 text-green-600 border-green-200' : h.estado === 'ocupada' ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>{h.estado}</span>)}
               </div>
-              <div className="text-sm text-slate-600 space-y-1 mb-4">
-                <p>Check-in: {new Date(r.fecha_entrada).toLocaleDateString()}</p>
-                <p>Check-out: {new Date(r.fecha_salida).toLocaleDateString()}</p>
-                <p>Huéspedes: {r.num_huespedes}</p>
-                <p className="font-bold text-teal-600 pt-1">Total: ${r.total.toLocaleString('es-AR')}</p>
-                <p className="text-xs text-slate-400">Reservado: {new Date(r.fecha_reserva).toLocaleDateString()}</p>
-              </div> 
+              <div className="text-sm text-slate-600 space-y-1 mb-4"><p>Check-in: {new Date(r.fecha_entrada).toLocaleDateString()}</p><p>Check-out: {new Date(r.fecha_salida).toLocaleDateString()}</p><p>Huéspedes: {r.num_huespedes}</p><p className="font-bold text-teal-600 pt-1">Total: ${r.total.toLocaleString('es-AR')}</p><p className="text-xs text-slate-400">Reservado: {new Date(r.fecha_reserva).toLocaleDateString()}</p></div> 
               <div className="grid grid-cols-3 gap-2"> 
                 <button onClick={()=>handleOp(r.id, 'completada')} disabled={r.estado!=='activa'} className="bg-green-100 hover:bg-green-200 text-green-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50"><CheckCircle className="h-4 w-4"/> Ok</button> 
                 <button onClick={()=>{setReservaAEditar(r);setShowModal(true)}} disabled={r.estado!=='activa'} className="bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50"><Edit className="h-4 w-4"/> Edit</button> 
@@ -219,21 +317,208 @@ const GestionReservas = ({ reservas, habitaciones, clientes, servicios, activida
           ) 
         })} 
       </div> 
-      {showModal && <ModalEditarReserva 
-        reserva={reservaAEditar} 
-        habitaciones={habitaciones} 
-        clientes={clientes} 
-        // 4. CORRECCIÓN: Pasar los props al Modal
-        servicios={servicios}
-        logs={actividades}
-        onClose={()=>setShowModal(false)} 
-        onSave={()=>{setShowModal(false);onRecargar()}}
-      />} 
+      {showModal && <ModalEditarReserva reserva={reservaAEditar} habitaciones={habitaciones} clientes={clientes} servicios={servicios} logs={actividades} onClose={()=>setShowModal(false)} onSave={()=>{setShowModal(false);onRecargar()}}/>} 
     </div> 
   )
 }
 
-// --- MODAL DE EDICIÓN PROFESIONAL ---
+// --- GESTIÓN DE HABITACIONES (CON LOG ACTIVADO) ---
+// --- GESTIÓN DE HABITACIONES (CORREGIDO: handleCrearAmenidad RESTAURADO) ---
+const GestionHabitaciones = ({ habitaciones, tipos, amenidadesDisponibles, onRecargar, user }: any) => {
+  const [showModal, setShowModal] = useState(false); 
+  const [editando, setEditando] = useState<Habitacion | null>(null); 
+  const [nuevaAmenidad, setNuevaAmenidad] = useState('');
+  
+  const [filtroNumero, setFiltroNumero] = useState(''); const [filtroTipo, setFiltroTipo] = useState(''); const [filtroAmenidad, setFiltroAmenidad] = useState(''); const [filtroEstado, setFiltroEstado] = useState(''); const [filtroPrecioMax, setFiltroPrecioMax] = useState(''); const [filtroCapacidad, setFiltroCapacidad] = useState('');
+  const [habitacionesFiltradas, setHabitacionesFiltradas] = useState(habitaciones);
+
+  useEffect(() => {
+    let res = habitaciones;
+    if(filtroNumero) res = res.filter(h => h.numero.toLowerCase().includes(filtroNumero.toLowerCase()));
+    if(filtroTipo) res = res.filter(h => h.tipo === filtroTipo);
+    if(filtroEstado) res = res.filter(h => h.estado === filtroEstado);
+    if(filtroAmenidad) res = res.filter(h => h.amenidades?.includes(filtroAmenidad));
+    if(filtroPrecioMax) res = res.filter(h => h.precio_noche <= parseFloat(filtroPrecioMax));
+    if(filtroCapacidad) res = res.filter(h => h.capacidad >= parseInt(filtroCapacidad));
+    setHabitacionesFiltradas(res);
+  }, [habitaciones, filtroNumero, filtroTipo, filtroEstado, filtroAmenidad, filtroPrecioMax, filtroCapacidad]);
+
+  const limpiarFiltros = () => { setFiltroNumero(''); setFiltroTipo(''); setFiltroEstado(''); setFiltroAmenidad(''); setFiltroPrecioMax(''); setFiltroCapacidad(''); };
+  const [formData, setFormData] = useState({ numero: '', tipo: tipos.length > 0 ? tipos[0].nombre : '', precio_noche: '', capacidad: '', amenidades: [] as string[], descripcion: '', estado: 'disponible' });
+  const resetForm = () => { setFormData({ numero: '', tipo: tipos.length > 0 ? tipos[0].nombre : '', precio_noche: '', capacidad: '', amenidades: [], descripcion: '', estado: 'disponible' }); setEditando(null); setShowModal(false); };
+  const handleEdit = (hab: Habitacion) => { setEditando(hab); setFormData({ numero: hab.numero, tipo: hab.tipo, precio_noche: hab.precio_noche?.toString() || '', capacidad: hab.capacidad?.toString() || '', amenidades: hab.amenidades || [], descripcion: hab.descripcion || '', estado: hab.estado }); setShowModal(true); };
+  const handleAmenidadChange = (nm: string) => { setFormData(prev => ({ ...prev, amenidades: prev.amenidades.includes(nm) ? prev.amenidades.filter(a => a !== nm) : [...prev.amenidades, nm] })) };
+  
+  // --- ESTA ES LA FUNCIÓN QUE FALTABA ---
+  const handleCrearAmenidad = async () => { 
+    if (!nuevaAmenidad.trim()) return; 
+    try { 
+      await supabase.from('amenidades').insert([{ nombre: nuevaAmenidad.trim() }]); 
+      await logActividad(user?.id, 'Nueva Amenidad', `Se agregó: ${nuevaAmenidad}`, 'info');
+      setNuevaAmenidad(''); 
+      onRecargar(); 
+    } catch (error) { 
+      console.error(error); 
+      alert('Error al crear amenidad.'); 
+    } 
+  };
+  // -------------------------------------
+
+  const handleSubmit = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    const dataToSave = { numero: formData.numero, tipo: formData.tipo, precio_noche: parseFloat(formData.precio_noche), capacidad: parseInt(formData.capacidad), amenidades: formData.amenidades, descripcion: formData.descripcion, estado: formData.estado }; 
+    try { 
+      if (editando) {
+        await supabase.from('habitaciones').update(dataToSave).eq('id', editando.id);
+        await logActividad(user?.id, 'Editar Habitación', `Habitación ${editando.numero} modificada`, 'warning');
+      } else {
+        await supabase.from('habitaciones').insert([dataToSave]);
+        await logActividad(user?.id, 'Crear Habitación', `Nueva habitación ${formData.numero} creada`, 'success');
+      }
+      resetForm(); onRecargar(); 
+    } catch (error) { console.error(error) } 
+  };
+  
+  const handleDelete = async (id: string) => { 
+    if (!confirm('¿Eliminar?')) return; 
+    try { 
+      await supabase.from('habitaciones').delete().eq('id', id); 
+      await logActividad(user?.id, 'Borrar Habitación', `Habitación eliminada`, 'alert');
+      onRecargar(); 
+    } catch (e) { console.error(e) } 
+  };
+
+  return (
+    <div>
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <div><h2 className="text-xl font-bold text-slate-800">Inventario</h2><p className="text-slate-500 text-sm">Total: {habitacionesFiltradas.length}</p></div>
+        <button onClick={() => { resetForm(); setShowModal(true); }} className="px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium flex items-center gap-2 shadow-md transition-all w-full md:w-auto justify-center"><Plus className="h-5 w-5" /> Nueva Habitación</button>
+      </div>
+      
+      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-8">
+        <div className="flex items-center gap-2 mb-4 text-slate-800 font-semibold border-b border-slate-100 pb-2"><Filter className="h-4 w-4 text-teal-600" /> Filtros</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end">
+          <div className="col-span-1">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Número</label>
+            <div className="relative"><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="Ej: 101" value={filtroNumero} onChange={e => setFiltroNumero(e.target.value)} className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg outline-none text-sm focus:border-teal-500"/><Home className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" /></div>
+          </div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label><select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Todos</option>{tipos.map(t => <option key={t.id} value={t.nombre}>{t.nombre}</option>)}</select></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Personas</label><input type="number" placeholder="Mín" value={filtroCapacidad} onChange={e => setFiltroCapacidad(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm focus:border-teal-500"/></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado</label><select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Cualquiera</option><option value="disponible">Disponible</option><option value="ocupada">Ocupada</option><option value="mantenimiento">Mantenimiento</option></select></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Precio Máx.</label><input type="number" placeholder="$" value={filtroPrecioMax} onChange={e => setFiltroPrecioMax(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm focus:border-teal-500"/></div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amenidad</label><select value={filtroAmenidad} onChange={e => setFiltroAmenidad(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Cualquiera</option>{amenidadesDisponibles.map(a => <option key={a.id} value={a.nombre}>{a.nombre}</option>)}</select></div>
+        </div>
+        {(filtroNumero || filtroTipo || filtroEstado || filtroAmenidad || filtroPrecioMax || filtroCapacidad) && (<div className="mt-4 pt-3 border-t border-slate-100 flex justify-end"><button onClick={limpiarFiltros} className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1 hover:underline"><X className="h-3 w-3" /> Limpiar filtros</button></div>)}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {habitacionesFiltradas.map((hab) => (
+          <div key={hab.id} className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 hover:shadow-md transition-shadow flex flex-col h-full">
+            <div className="flex justify-between items-start mb-4">
+              <div><h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">{hab.numero}<span className="text-xs font-normal text-slate-400 border border-slate-200 px-2 py-0.5 rounded-full">{hab.tipo}</span></h3></div>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${hab.estado === 'disponible' ? 'bg-green-100 text-green-700' : hab.estado === 'ocupada' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{hab.estado}</span>
+            </div>
+            <div className="mb-3">
+              <p className="text-2xl font-bold text-teal-600">${hab.precio_noche?.toLocaleString('es-AR')} <span className="text-sm text-slate-400 font-normal">/ noche</span></p>
+              <p className="text-sm text-slate-500 mt-1 flex items-center gap-1"><Users className="h-3 w-3" /> Capacidad: {hab.capacidad} pax</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-4 flex-grow content-start">
+              {hab.amenidades?.slice(0, 4).map((am, i) => (<span key={i} className="text-[11px] bg-slate-100 text-slate-600 px-2 py-1 rounded-md font-medium">{am}</span>))}
+              {(hab.amenidades?.length || 0) > 4 && <span className="text-[11px] text-slate-400 px-1 py-1">+{hab.amenidades!.length - 4} más</span>}
+            </div>
+            <div className="flex gap-2 pt-4 border-t border-slate-100 mt-auto">
+              <button onClick={() => handleEdit(hab)} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-600 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"><Edit className="h-4 w-4"/> Editar</button>
+              <button onClick={() => handleDelete(hab.id)} className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"><Trash2 className="h-4 w-4"/> Borrar</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-slate-900">{editando ? 'Editar' : 'Nueva'} Habitación</h2><button onClick={resetForm} className="text-slate-400 hover:text-slate-600"><X className="h-6 w-6" /></button></div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div><label className="text-sm font-medium text-slate-700">Número</label><input value={formData.numero} onChange={e => setFormData({...formData, numero: e.target.value})} inputMode="numeric" className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
+                <div><label className="text-sm font-medium text-slate-700">Tipo</label><select value={formData.tipo} onChange={e => setFormData({...formData, tipo: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required><option value="">Seleccionar...</option>{tipos.map(t => <option key={t.id} value={t.nombre}>{t.nombre}</option>)}</select></div>
+                <div><label className="text-sm font-medium text-slate-700">Precio</label><input type="number" value={formData.precio_noche} onChange={e => setFormData({...formData, precio_noche: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
+                <div><label className="text-sm font-medium text-slate-700">Capacidad</label><input type="number" value={formData.capacidad} onChange={e => setFormData({...formData, capacidad: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
+                <div><label className="text-sm font-medium text-slate-700">Estado</label><select value={formData.estado} onChange={e => setFormData({...formData, estado: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg"><option value="disponible">Disponible</option><option value="ocupada">Ocupada</option><option value="mantenimiento">Mantenimiento</option></select></div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Amenidades</label>
+                <div className="flex gap-2 mb-2">
+                  <input placeholder="Agregar nueva (ej: Netflix)" value={nuevaAmenidad} onChange={e => setNuevaAmenidad(e.target.value)} className="flex-1 border border-slate-300 p-2 rounded-lg text-sm" />
+                  <button type="button" onClick={handleCrearAmenidad} className="bg-green-600 hover:bg-green-700 text-white px-3 rounded-lg font-bold transition-colors">+</button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border border-slate-300 rounded-lg bg-slate-50 max-h-40 overflow-y-auto">
+                  {amenidadesDisponibles.map(amenidad => (
+                    <label key={amenidad.id} className="flex items-center space-x-2 cursor-pointer">
+                      <input type="checkbox" checked={formData.amenidades.includes(amenidad.nombre)} onChange={() => handleAmenidadChange(amenidad.nombre)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 h-4 w-4" />
+                      <span className="text-sm text-slate-700">{amenidad.nombre}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div><label className="text-sm font-medium text-slate-700">Descripción</label><textarea value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" rows={3} /></div>
+              <div className="flex gap-3 pt-4"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium">Guardar</button><button type="button" onClick={resetForm} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium">Cancelar</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- GESTIÓN DE SERVICIOS (LOG ACTIVADO) ---
+const GestionServicios = ({ servicios, onRecargar, user }: { servicios: Servicio[], onRecargar: () => void, user: any }) => {
+  const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Servicio | null>(null); const [formData, setFormData] = useState({ nombre: '', descripcion: '', precio: '', imagen_url: '' });
+  const handleSubmit = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    const dataToSave = { nombre: formData.nombre, descripcion: formData.descripcion, precio: parseFloat(formData.precio), imagen_url: formData.imagen_url, disponible: true }; 
+    try { 
+      if (editando) {
+        await supabase.from('servicios').update(dataToSave).eq('id', editando.id);
+        await logActividad(user?.id, 'Editar Servicio', `Servicio ${formData.nombre} actualizado`, 'warning');
+      } else {
+        await supabase.from('servicios').insert([dataToSave]);
+        await logActividad(user?.id, 'Nuevo Servicio', `Servicio ${formData.nombre} creado`, 'success');
+      }
+      setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setEditando(null); setShowModal(false); onRecargar(); 
+    } catch (error) { console.error(error) } 
+  }
+  const handleDelete = async (id: string) => { 
+    if (!confirm('¿Borrar servicio?')) return; 
+    await supabase.from('servicios').delete().eq('id', id); 
+    await logActividad(user?.id, 'Borrar Servicio', `Servicio eliminado`, 'alert');
+    onRecargar(); 
+  }
+  return ( <div> <div className="mb-6"><button onClick={() => {setEditando(null); setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setShowModal(true)}} className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition-colors w-full md:w-auto justify-center"><Plus className="h-5 w-5" /> Nuevo Servicio</button></div> <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{servicios.map((s) => (<div key={s.id} className="bg-white p-6 rounded-lg border shadow-sm hover:shadow-md transition-shadow"><h3 className="font-bold text-lg text-slate-900">{s.nombre}</h3><p className="text-sm text-slate-600 mb-2 line-clamp-2">{s.descripcion}</p><p className="font-bold text-teal-600 mb-4">${s.precio.toLocaleString('es-AR')}</p><div className="flex gap-2"><button onClick={() => { setEditando(s); setFormData({ nombre: s.nombre, descripcion: s.descripcion, precio: s.precio.toString(), imagen_url: s.imagen_url || '' }); setShowModal(true) }} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium transition-colors">Editar</button><button onClick={() => handleDelete(s.id)} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded-lg text-sm font-medium transition-colors">Eliminar</button></div></div>))}</div> {showModal && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><div className="bg-white p-6 rounded-xl max-w-md w-full shadow-2xl"><h2 className="text-2xl font-bold mb-4 text-slate-900">{editando ? 'Editar' : 'Nuevo'} Servicio</h2><form onSubmit={handleSubmit} className="space-y-4"><input placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><textarea placeholder="Descripción" value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><input type="number" placeholder="Precio" value={formData.precio} onChange={e => setFormData({...formData, precio: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><div className="flex gap-2 pt-2"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium transition-colors">Guardar</button><button type="button" onClick={() => setShowModal(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium transition-colors">Cancelar</button></div></form></div></div>)} </div> )
+}
+
+const GestionOperadores = ({ operadores, onRecargar, user }: any) => {
+  const [showCreate, setShowCreate] = useState(false); const [showEdit, setShowEdit] = useState(false); const [opEdit, setOpEdit] = useState<any>(null);
+  const [form, setForm] = useState({email:'', nombre:'', password:''}); const [error, setError] = useState('');
+  const submitCreate = async (e:any) => { e.preventDefault(); setError(''); try { const {error} = await supabase.functions.invoke('create-user', {body:{...form, rol:'operador'}}); if(error) throw error; 
+    await logActividad(user?.id, 'Nuevo Operador', `Operador ${form.nombre} creado`, 'success');
+    setForm({email:'',nombre:'',password:''}); setShowCreate(false); onRecargar(); 
+  } catch(err:any) { setError(err.message); }};
+  const handleEditClick = (op: any) => { setOpEdit(op); setShowEdit(true); }
+  const handleDelete = async (id: string) => { if (!confirm('¿Estás seguro?')) return; try { await supabase.from('usuarios').delete().eq('id', id); await logActividad(user?.id, 'Eliminar Usuario', `Usuario eliminado del sistema`, 'alert'); onRecargar(); } catch (error) { console.error('Error:', error) } }
+  return ( <div> <div className="mb-6"><button onClick={()=>{setError('');setShowCreate(true)}} className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition-colors w-full md:w-auto justify-center"><Plus className="h-5 w-5"/>Nuevo Operador</button></div> <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{operadores.map((o:any)=><div key={o.id} className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow"><h3 className="font-bold text-lg text-slate-900">{o.nombre}</h3><p className="text-sm text-slate-600 mb-4">{o.email}</p><div className="flex gap-2"><button onClick={()=>handleEditClick(o)} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium transition-colors">Editar</button><button onClick={()=>handleDelete(o.id)} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded-lg text-sm font-medium transition-colors">Eliminar</button></div></div>)}</div> {showCreate && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl"><h2 className="text-2xl font-bold mb-4">Nuevo Operador</h2><form onSubmit={submitCreate} className="space-y-4">{error && <p className="text-red-700 bg-red-50 p-2 rounded text-sm">{error}</p>}<input placeholder="Nombre" value={form.nombre} onChange={e=>setForm({...form, nombre:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required/><input placeholder="Email" value={form.email} onChange={e=>setForm({...form, email:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required/><input type="password" placeholder="Pass" value={form.password} onChange={e=>setForm({...form, password:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required minLength={6}/><div className="flex gap-2 pt-2"><button className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium">Crear</button><button type="button" onClick={()=>setShowCreate(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium">Cancelar</button></div></form></div></div>} {showEdit && opEdit && <ModalEditarOperador operador={opEdit} onClose={()=>setShowEdit(false)} onSave={()=>{setShowEdit(false);onRecargar()}} />} </div> )
+}
+
+const ModalEditarOperador = ({ operador, onClose, onSave }: any) => {
+  const { user: adminUser } = useAuth(); const [formData, setFormData] = useState({ nombre: operador.nombre, email: operador.email, rol: operador.rol });
+  const [pass, setPass] = useState(''); const [adminPass, setAdminPass] = useState(''); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const handleSubmit = async (e: any) => { e.preventDefault(); setLoading(true); setError(''); try { const { error: funcError } = await supabase.functions.invoke('admin-update-user', { body: { admin_id: adminUser?.id, admin_password: adminPass, target_user_id: operador.id, ...formData, nueva_password: pass || undefined } }); if (funcError) { const err = await funcError.context.json(); throw new Error(err.error.message); } 
+    await logActividad(adminUser?.id, 'Editar Usuario', `Usuario ${formData.nombre} modificado`, 'warning');
+    onSave(); 
+  } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
+  return ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl"><h2 className="text-2xl font-bold mb-4">Editar Operador</h2><form onSubmit={handleSubmit} className="space-y-4">{error && <p className="text-red-700 bg-red-50 p-2 rounded text-sm">{error}</p>}<input value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" placeholder="Nombre"/><input value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" placeholder="Email"/><select value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value as any})} className="w-full border border-slate-300 p-2 rounded-lg"><option value="operador">Operador</option><option value="administrador">Administrador</option></select><input type="password" placeholder="Nueva contraseña (opcional)" value={pass} onChange={e => setPass(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"/><div className="bg-amber-50 p-3 rounded-lg border border-amber-200"><label className="text-sm font-bold text-amber-800 flex gap-2 items-center mb-1"><Shield className="h-4 w-4"/>Confirmar con TU contraseña:</label><input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} className="w-full border border-amber-300 p-2 rounded-lg bg-white" required/></div><div className="flex gap-2 pt-2"><button disabled={loading} className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium disabled:opacity-50">Guardar</button><button type="button" onClick={onClose} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium disabled:opacity-50">Cancelar</button></div></form></div></div> )
+}
+
 const ModalEditarReserva = ({ reserva, habitaciones, clientes, servicios, logs, onClose, onSave }: any) => {
   const cliente = clientes.find((c:any) => c.id === reserva.usuario_id);
   const habitacionActual = habitaciones.find((h:any) => h.id === reserva.habitacion_id);
@@ -293,7 +578,6 @@ const ModalEditarReserva = ({ reserva, habitaciones, clientes, servicios, logs, 
         total: totalCalculado
       }).eq('id', reserva.id);
 
-      // 5. CORRECCIÓN: logActividad ya está importado
       await logActividad(
           reserva.usuario_id,
           'Modificación Admin',
@@ -504,137 +788,4 @@ const Estadisticas = ({ habitaciones, reservas }: { habitaciones: Habitacion[], 
       </div>
     </div>
   )
-}
-
-// --- HISTORIAL COMPONENTE ---
-const GestionHistorial = ({ actividades, onRecargar }: { actividades: Actividad[], onRecargar: () => void }) => {
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-6"><div><h2 className="text-xl font-bold text-slate-800">Log de Actividad</h2><p className="text-sm text-slate-500">Auditoría de las últimas 50 acciones</p></div><button onClick={onRecargar} className="p-2 text-slate-500 hover:text-teal-600 bg-white border border-slate-200 rounded-lg shadow-sm"><RefreshCw className="h-5 w-5" /></button></div>
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        {actividades.length === 0 ? (<div className="p-8 text-center text-slate-500">No hay actividad registrada aún.</div>) : (
-          <div className="divide-y divide-slate-100">
-            {actividades.map((log) => (
-              <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-4">
-                <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${log.tipo === 'success' ? 'bg-emerald-500' : log.tipo === 'warning' ? 'bg-amber-500' : log.tipo === 'alert' ? 'bg-red-500' : 'bg-blue-500'}`} />
-                <div className="flex-1"><div className="flex justify-between items-start"><h3 className="text-sm font-bold text-slate-800">{log.accion}</h3><span className="text-xs text-slate-400 flex items-center gap-1"><Clock className="h-3 w-3" />{new Date(log.created_at).toLocaleString('es-AR')}</span></div><p className="text-sm text-slate-600 mt-1">{log.detalles}</p><p className="text-xs text-slate-400 mt-2">Usuario: <span className="font-medium text-slate-600">{log.usuarios?.nombre || 'Sistema'}</span></p></div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// --- RESTO DE COMPONENTES ---
-const GestionHabitaciones = ({ habitaciones, tipos, amenidadesDisponibles, onRecargar }: any) => {
-  const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Habitacion | null>(null); const [nuevaAmenidad, setNuevaAmenidad] = useState('');
-  const [filtroNumero, setFiltroNumero] = useState(''); const [filtroTipo, setFiltroTipo] = useState(''); const [filtroAmenidad, setFiltroAmenidad] = useState(''); const [filtroEstado, setFiltroEstado] = useState(''); const [filtroPrecioMax, setFiltroPrecioMax] = useState(''); const [filtroCapacidad, setFiltroCapacidad] = useState('');
-  const [habitacionesFiltradas, setHabitacionesFiltradas] = useState(habitaciones);
-
-  useEffect(() => {
-    let res = habitaciones;
-    if(filtroNumero) res = res.filter(h => h.numero.toLowerCase().includes(filtroNumero.toLowerCase()));
-    if(filtroTipo) res = res.filter(h => h.tipo === filtroTipo);
-    if(filtroEstado) res = res.filter(h => h.estado === filtroEstado);
-    if(filtroAmenidad) res = res.filter(h => h.amenidades?.includes(filtroAmenidad));
-    if(filtroPrecioMax) res = res.filter(h => h.precio_noche <= parseFloat(filtroPrecioMax));
-    if(filtroCapacidad) res = res.filter(h => h.capacidad >= parseInt(filtroCapacidad));
-    setHabitacionesFiltradas(res);
-  }, [habitaciones, filtroNumero, filtroTipo, filtroEstado, filtroAmenidad, filtroPrecioMax, filtroCapacidad]);
-
-  const limpiarFiltros = () => { setFiltroNumero(''); setFiltroTipo(''); setFiltroEstado(''); setFiltroAmenidad(''); setFiltroPrecioMax(''); setFiltroCapacidad(''); };
-  const [formData, setFormData] = useState({ numero: '', tipo: tipos.length > 0 ? tipos[0].nombre : '', precio_noche: '', capacidad: '', amenidades: [] as string[], descripcion: '', estado: 'disponible' });
-  const resetForm = () => { setFormData({ numero: '', tipo: tipos.length > 0 ? tipos[0].nombre : '', precio_noche: '', capacidad: '', amenidades: [], descripcion: '', estado: 'disponible' }); setEditando(null); setShowModal(false); };
-  const handleEdit = (hab: Habitacion) => { setEditando(hab); setFormData({ numero: hab.numero, tipo: hab.tipo, precio_noche: hab.precio_noche?.toString() || '', capacidad: hab.capacidad?.toString() || '', amenidades: hab.amenidades || [], descripcion: hab.descripcion || '', estado: hab.estado }); setShowModal(true); };
-  const handleAmenidadChange = (nm: string) => { setFormData(prev => ({ ...prev, amenidades: prev.amenidades.includes(nm) ? prev.amenidades.filter(a => a !== nm) : [...prev.amenidades, nm] })) };
-  const handleCrearAmenidad = async () => { if (!nuevaAmenidad.trim()) return; try { await supabase.from('amenidades').insert([{ nombre: nuevaAmenidad.trim() }]); setNuevaAmenidad(''); onRecargar(); } catch (error) { console.error(error); alert('Error.'); } };
-  const handleSubmit = async (e: React.FormEvent) => { e.preventDefault(); const dataToSave = { numero: formData.numero, tipo: formData.tipo, precio_noche: parseFloat(formData.precio_noche), capacidad: parseInt(formData.capacidad), amenidades: formData.amenidades, descripcion: formData.descripcion, estado: formData.estado }; try { if (editando) await supabase.from('habitaciones').update(dataToSave).eq('id', editando.id); else await supabase.from('habitaciones').insert([dataToSave]); resetForm(); onRecargar(); } catch (error) { console.error(error) } };
-  const handleDelete = async (id: string) => { if (!confirm('¿Eliminar?')) return; try { await supabase.from('habitaciones').delete().eq('id', id); onRecargar(); } catch (e) { console.error(e) } };
-
-  return (
-    <div>
-      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <div><h2 className="text-xl font-bold text-slate-800">Inventario</h2><p className="text-slate-500 text-sm">Total: {habitacionesFiltradas.length}</p></div>
-        <button onClick={() => { resetForm(); setShowModal(true); }} className="px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium flex items-center gap-2 shadow-md transition-all w-full md:w-auto justify-center"><Plus className="h-5 w-5" /> Nueva Habitación</button>
-      </div>
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-8">
-        <div className="flex items-center gap-2 mb-4 text-slate-800 font-semibold border-b border-slate-100 pb-2"><Filter className="h-4 w-4 text-teal-600" /> Filtros</div>
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end">
-          <div className="col-span-1"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Número</label><div className="relative"><input type="text" placeholder="Ej: 101" value={filtroNumero} onChange={e => setFiltroNumero(e.target.value)} className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg outline-none text-sm"/><Home className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" /></div></div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label><select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Todos</option>{tipos.map(t => <option key={t.id} value={t.nombre}>{t.nombre}</option>)}</select></div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Personas</label><input type="number" placeholder="Mín" value={filtroCapacidad} onChange={e => setFiltroCapacidad(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm"/></div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado</label><select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Cualquiera</option><option value="disponible">Disponible</option><option value="ocupada">Ocupada</option><option value="mantenimiento">Mantenimiento</option></select></div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Precio Máx.</label><input type="number" placeholder="$" value={filtroPrecioMax} onChange={e => setFiltroPrecioMax(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm"/></div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amenidad</label><select value={filtroAmenidad} onChange={e => setFiltroAmenidad(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none text-sm bg-white"><option value="">Cualquiera</option>{amenidadesDisponibles.map(a => <option key={a.id} value={a.nombre}>{a.nombre}</option>)}</select></div>
-        </div>
-        {(filtroNumero || filtroTipo || filtroEstado || filtroAmenidad || filtroPrecioMax || filtroCapacidad) && (<div className="mt-4 pt-3 border-t border-slate-100 flex justify-end"><button onClick={limpiarFiltros} className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1 hover:underline"><X className="h-3 w-3" /> Limpiar filtros</button></div>)}
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {habitacionesFiltradas.map((hab) => (
-          <div key={hab.id} className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 hover:shadow-md transition-shadow flex flex-col h-full">
-            <div className="flex justify-between items-start mb-4">
-              <div><h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">{hab.numero}<span className="text-xs font-normal text-slate-400 border border-slate-200 px-2 py-0.5 rounded-full">{hab.tipo}</span></h3></div>
-              <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${hab.estado === 'disponible' ? 'bg-green-100 text-green-700' : hab.estado === 'ocupada' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{hab.estado}</span>
-            </div>
-            <div className="mb-3">
-              <p className="text-2xl font-bold text-teal-600">${hab.precio_noche?.toLocaleString('es-AR')} <span className="text-sm text-slate-400 font-normal">/ noche</span></p>
-              <p className="text-sm text-slate-500 mt-1 flex items-center gap-1"><Users className="h-3 w-3" /> Capacidad: {hab.capacidad} pax</p>
-            </div>
-            <div className="flex flex-wrap gap-1.5 mb-4 flex-grow content-start">
-              {hab.amenidades?.slice(0, 4).map((am, i) => (<span key={i} className="text-[11px] bg-slate-100 text-slate-600 px-2 py-1 rounded-md font-medium">{am}</span>))}
-              {(hab.amenidades?.length || 0) > 4 && <span className="text-[11px] text-slate-400 px-1 py-1">+{hab.amenidades!.length - 4} más</span>}
-            </div>
-            <div className="flex gap-2 pt-4 border-t border-slate-100 mt-auto">
-              <button onClick={() => handleEdit(hab)} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-600 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"><Edit className="h-4 w-4"/> Editar</button>
-              <button onClick={() => handleDelete(hab.id)} className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"><Trash2 className="h-4 w-4"/> Borrar</button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-slate-900">{editando ? 'Editar' : 'Nueva'} Habitación</h2><button onClick={resetForm} className="text-slate-400 hover:text-slate-600"><X className="h-6 w-6" /></button></div>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid md:grid-cols-2 gap-4">
-                <div><label className="text-sm font-medium text-slate-700">Número</label><input value={formData.numero} onChange={e => setFormData({...formData, numero: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
-                <div><label className="text-sm font-medium text-slate-700">Tipo</label><select value={formData.tipo} onChange={e => setFormData({...formData, tipo: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required><option value="">Seleccionar...</option>{tipos.map(t => <option key={t.id} value={t.nombre}>{t.nombre}</option>)}</select></div>
-                <div><label className="text-sm font-medium text-slate-700">Precio</label><input type="number" value={formData.precio_noche} onChange={e => setFormData({...formData, precio_noche: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
-                <div><label className="text-sm font-medium text-slate-700">Capacidad</label><input type="number" value={formData.capacidad} onChange={e => setFormData({...formData, capacidad: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /></div>
-                <div><label className="text-sm font-medium text-slate-700">Estado</label><select value={formData.estado} onChange={e => setFormData({...formData, estado: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg"><option value="disponible">Disponible</option><option value="ocupada">Ocupada</option><option value="mantenimiento">Mantenimiento</option></select></div>
-              </div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-2">Amenidades</label><div className="flex gap-2 mb-2"><input placeholder="Agregar nueva (ej: Netflix)" value={nuevaAmenidad} onChange={e => setNuevaAmenidad(e.target.value)} className="flex-1 border border-slate-300 p-2 rounded-lg text-sm" /><button type="button" onClick={handleCrearAmenidad} className="bg-green-600 hover:bg-green-700 text-white px-3 rounded-lg font-bold transition-colors">+</button></div><div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border border-slate-300 rounded-lg bg-slate-50 max-h-40 overflow-y-auto">{amenidadesDisponibles.map(amenidad => (<label key={amenidad.id} className="flex items-center space-x-2 cursor-pointer"><input type="checkbox" checked={formData.amenidades.includes(amenidad.nombre)} onChange={() => handleAmenidadChange(amenidad.nombre)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 h-4 w-4" /><span className="text-sm text-slate-700">{amenidad.nombre}</span></label>))}</div></div>
-              <div><label className="text-sm font-medium text-slate-700">Descripción</label><textarea value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" rows={3} /></div>
-              <div className="flex gap-3 pt-4"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium">Guardar</button><button type="button" onClick={resetForm} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium">Cancelar</button></div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-const GestionServicios = ({ servicios, onRecargar }: { servicios: Servicio[], onRecargar: () => void }) => {
-  const [showModal, setShowModal] = useState(false); const [editando, setEditando] = useState<Servicio | null>(null); const [formData, setFormData] = useState({ nombre: '', descripcion: '', precio: '', imagen_url: '' });
-  const handleSubmit = async (e: React.FormEvent) => { e.preventDefault(); const dataToSave = { nombre: formData.nombre, descripcion: formData.descripcion, precio: parseFloat(formData.precio), imagen_url: formData.imagen_url, disponible: true }; try { if (editando) await supabase.from('servicios').update(dataToSave).eq('id', editando.id); else await supabase.from('servicios').insert([dataToSave]); setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setEditando(null); setShowModal(false); onRecargar(); } catch (error) { console.error(error) } }
-  const handleDelete = async (id: string) => { if (!confirm('¿Borrar servicio?')) return; await supabase.from('servicios').delete().eq('id', id); onRecargar(); }
-  return ( <div> <div className="mb-6"><button onClick={() => {setEditando(null); setFormData({ nombre: '', descripcion: '', precio: '', imagen_url: '' }); setShowModal(true)}} className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition-colors w-full md:w-auto justify-center"><Plus className="h-5 w-5" /> Nuevo Servicio</button></div> <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{servicios.map((s) => (<div key={s.id} className="bg-white p-6 rounded-lg border shadow-sm hover:shadow-md transition-shadow"><h3 className="font-bold text-lg text-slate-900">{s.nombre}</h3><p className="text-sm text-slate-600 mb-2 line-clamp-2">{s.descripcion}</p><p className="font-bold text-teal-600 mb-4">${s.precio.toLocaleString('es-AR')}</p><div className="flex gap-2"><button onClick={() => { setEditando(s); setFormData({ nombre: s.nombre, descripcion: s.descripcion, precio: s.precio.toString(), imagen_url: s.imagen_url || '' }); setShowModal(true) }} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium transition-colors">Editar</button><button onClick={() => handleDelete(s.id)} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded-lg text-sm font-medium transition-colors">Eliminar</button></div></div>))}</div> {showModal && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><div className="bg-white p-6 rounded-xl max-w-md w-full shadow-2xl"><h2 className="text-2xl font-bold mb-4 text-slate-900">{editando ? 'Editar' : 'Nuevo'} Servicio</h2><form onSubmit={handleSubmit} className="space-y-4"><input placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><textarea placeholder="Descripción" value={formData.descripcion} onChange={e => setFormData({...formData, descripcion: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><input type="number" placeholder="Precio" value={formData.precio} onChange={e => setFormData({...formData, precio: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required /><div className="flex gap-2 pt-2"><button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium transition-colors">Guardar</button><button type="button" onClick={() => setShowModal(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium transition-colors">Cancelar</button></div></form></div></div>)} </div> )
-}
-
-const GestionOperadores = ({ operadores, onRecargar }: any) => {
-  const [showCreate, setShowCreate] = useState(false); const [showEdit, setShowEdit] = useState(false); const [opEdit, setOpEdit] = useState<any>(null);
-  const [form, setForm] = useState({email:'', nombre:'', password:''}); const [error, setError] = useState('');
-  const submitCreate = async (e:any) => { e.preventDefault(); setError(''); try { const {error} = await supabase.functions.invoke('create-user', {body:{...form, rol:'operador'}}); if(error) throw error; setForm({email:'',nombre:'',password:''}); setShowCreate(false); onRecargar(); } catch(err:any) { setError(err.message); }};
-  const handleEditClick = (op: any) => { setOpEdit(op); setShowEdit(true); }
-  const handleDelete = async (id: string) => { if (!confirm('¿Estás seguro?')) return; try { await supabase.from('usuarios').delete().eq('id', id); onRecargar(); } catch (error) { console.error('Error:', error) } }
-  return ( <div> <div className="mb-6"><button onClick={()=>{setError('');setShowCreate(true)}} className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition-colors w-full md:w-auto justify-center"><Plus className="h-5 w-5"/>Nuevo Operador</button></div> <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{operadores.map((o:any)=><div key={o.id} className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow"><h3 className="font-bold text-lg text-slate-900">{o.nombre}</h3><p className="text-sm text-slate-600 mb-4">{o.email}</p><div className="flex gap-2"><button onClick={()=>handleEditClick(o)} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-lg text-sm font-medium transition-colors">Editar</button><button onClick={()=>handleDelete(o.id)} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded-lg text-sm font-medium transition-colors">Eliminar</button></div></div>)}</div> {showCreate && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl"><h2 className="text-2xl font-bold mb-4">Nuevo Operador</h2><form onSubmit={submitCreate} className="space-y-4">{error && <p className="text-red-700 bg-red-50 p-2 rounded text-sm">{error}</p>}<input placeholder="Nombre" value={form.nombre} onChange={e=>setForm({...form, nombre:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required/><input placeholder="Email" value={form.email} onChange={e=>setForm({...form, email:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required/><input type="password" placeholder="Pass" value={form.password} onChange={e=>setForm({...form, password:e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" required minLength={6}/><div className="flex gap-2 pt-2"><button className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium">Crear</button><button type="button" onClick={()=>setShowCreate(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium">Cancelar</button></div></form></div></div>} {showEdit && opEdit && <ModalEditarOperador operador={opEdit} onClose={()=>setShowEdit(false)} onSave={()=>{setShowEdit(false);onRecargar()}} />} </div> )
-}
-
-const ModalEditarOperador = ({ operador, onClose, onSave }: any) => {
-  const { user: adminUser } = useAuth(); const [formData, setFormData] = useState({ nombre: operador.nombre, email: operador.email, rol: operador.rol });
-  const [pass, setPass] = useState(''); const [adminPass, setAdminPass] = useState(''); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  const handleSubmit = async (e: any) => { e.preventDefault(); setLoading(true); setError(''); try { const { error: funcError } = await supabase.functions.invoke('admin-update-user', { body: { admin_id: adminUser?.id, admin_password: adminPass, target_user_id: operador.id, ...formData, nueva_password: pass || undefined } }); if (funcError) { const err = await funcError.context.json(); throw new Error(err.error.message); } onSave(); } catch (e: any) { setError(e.message); } finally { setLoading(false); } };
-  return ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl"><h2 className="text-2xl font-bold mb-4">Editar Operador</h2><form onSubmit={handleSubmit} className="space-y-4">{error && <p className="text-red-700 bg-red-50 p-2 rounded text-sm">{error}</p>}<input value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" placeholder="Nombre"/><input value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg" placeholder="Email"/><select value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value as any})} className="w-full border border-slate-300 p-2 rounded-lg"><option value="operador">Operador</option><option value="administrador">Administrador</option></select><input type="password" placeholder="Nueva contraseña (opcional)" value={pass} onChange={e => setPass(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg"/><div className="bg-amber-50 p-3 rounded-lg border border-amber-200"><label className="text-sm font-bold text-amber-800 flex gap-2 items-center mb-1"><Shield className="h-4 w-4"/>Confirmar con TU contraseña:</label><input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} className="w-full border border-amber-300 p-2 rounded-lg bg-white" required/></div><div className="flex gap-2 pt-2"><button disabled={loading} className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-medium disabled:opacity-50">Guardar</button><button type="button" onClick={onClose} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 rounded-lg font-medium disabled:opacity-50">Cancelar</button></div></form></div></div> )
 }
