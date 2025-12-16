@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-// 1. Definimos qué forma tiene nuestro contexto (incluyendo las funciones que faltaban)
 interface AuthContextType {
   user: any | null
   loading: boolean
@@ -21,14 +20,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Verificar sesión actual al cargar
+    // 1. Verificar sesión inicial
     checkUser()
 
-    // Escuchar cambios (login, logout, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    // 2. Escuchar cambios (Login, Logout, Auto-refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("🔄 Auth Event:", event); // DEBUG
+      
       if (session?.user) {
-        await fetchUserProfile(session.user.id, session.user.email)
+        // Si hay sesión de Supabase, buscamos los datos del perfil
+        await fetchUserProfile(session.user)
       } else {
+        // Si no hay sesión (Logout), limpiamos
         setUser(null)
         setLoading(false)
       }
@@ -43,80 +46,95 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
-        await fetchUserProfile(session.user.id, session.user.email)
+        await fetchUserProfile(session.user)
       } else {
         setLoading(false)
       }
     } catch (error) {
-      console.error(error)
+      console.error("Error checking session:", error)
       setLoading(false)
     }
   }
 
-  // Busca los datos extra (rol, nombre) en la tabla 'usuarios'
-  const fetchUserProfile = async (userId: string, email: string | undefined) => {
+  const fetchUserProfile = async (authUser: any) => {
     try {
+      // Intentamos obtener el rol y nombre desde la tabla 'usuarios'
       const { data, error } = await supabase
         .from('usuarios')
         .select('*')
-        .eq('id', userId)
+        .eq('id', authUser.id)
         .single()
 
-      if (error || !data) {
-        // Si el usuario existe en Auth pero no en la tabla pública (raro, pero posible)
-        console.warn("Usuario no encontrado en tabla publica, usando datos básicos")
-        setUser({ id: userId, email: email, rol: 'usuario', nombre: 'Usuario' }) // Fallback
+      if (error) {
+        console.warn("⚠️ Usuario autenticado pero no encontrado en tabla pública:", error.message)
+        // FALLBACK CRÍTICO: Si falla la BDD, igual dejamos entrar al usuario con datos básicos
+        // Esto evita que te quedes fuera si la tabla 'usuarios' tiene problemas
+        setUser({
+          id: authUser.id,
+          email: authUser.email,
+          nombre: authUser.user_metadata?.nombre || 'Usuario', // Intentamos sacar nombre de metadata
+          rol: 'usuario' // Rol por defecto si no se encuentra
+        })
       } else {
+        // Todo correcto, usamos los datos de la base de datos
         setUser(data)
       }
-    } catch (error) {
-      console.error(error)
+    } catch (err) {
+      console.error("Error fetching profile:", err)
     } finally {
       setLoading(false)
     }
   }
 
-  // --- FUNCIÓN SIGN IN (LOGIN) ---
+  // --- LOGIN ---
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
+    // Usamos el login estándar de Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
-    if (error) throw error
+    
+    if (error) {
+        console.error("Login Error:", error.message)
+        throw error
+    }
+    
+    // Si el login es exitoso, forzamos la carga del perfil inmediatamente
+    if (data.user) {
+        await fetchUserProfile(data.user)
+    }
   }
 
-  // --- FUNCIÓN SIGN UP (REGISTRO) ---
+  // --- REGISTRO ---
   const signUp = async (email: string, password: string, nombre: string) => {
-    // 1. Crear usuario en Auth de Supabase
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { nombre } // Guardamos el nombre en la metadata por si acaso
+        data: { nombre } // Guardamos nombre en metadata de Supabase Auth
       }
     })
+    
     if (error) throw error
 
-    // 2. Insertar en nuestra tabla pública 'usuarios'
-    // (Esto es necesario si no tienes un Trigger automático en la base de datos)
+    // Intentamos crear el registro en la tabla pública manualmente
+    // (Por si el Trigger de la base de datos falla o no existe)
     if (data.user) {
-      const { error: dbError } = await supabase.from('usuarios').insert([
-        {
-          id: data.user.id,
-          email: email,
-          nombre: nombre,
-          rol: 'usuario' // Rol por defecto
-        }
-      ])
-      
-      // Si falla la inserción en DB pública, es crítico (pero si ya tienes un Trigger, esto dará error de duplicado que podemos ignorar)
-      if (dbError && !dbError.message.includes('duplicate')) {
-         console.error("Error creando perfil público:", dbError)
-      }
+        const { error: dbError } = await supabase.from('usuarios').insert([{
+            id: data.user.id,
+            email: email,
+            nombre: nombre,
+            rol: 'usuario'
+        }])
+        
+        if (dbError) console.log("Nota: El usuario quizás ya fue creado por un Trigger DB", dbError.message)
+        
+        // Auto-login (Cargar perfil)
+        await fetchUserProfile(data.user)
     }
   }
 
-  // --- FUNCIÓN SIGN OUT (SALIR) ---
+  // --- LOGOUT ---
   const signOut = async () => {
     await supabase.auth.signOut()
     setUser(null)
@@ -125,9 +143,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const value = {
     user,
     loading,
-    signIn, // <--- Ahora sí las exportamos
-    signUp, // <--- Ahora sí las exportamos
-    signOut // <--- Ahora sí las exportamos
+    signIn,
+    signUp,
+    signOut
   }
 
   return (
