@@ -20,124 +20,91 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 1. Verificar sesión inicial
-    checkUser()
-
-    // 2. Escuchar cambios (Login, Logout, Auto-refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("🔄 Auth Event:", event); // DEBUG
-      
+    // 1. Obtener sesión inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        // Si hay sesión de Supabase, buscamos los datos del perfil
-        await fetchUserProfile(session.user)
+        fetchUserProfile(session.user)
       } else {
-        // Si no hay sesión (Logout), limpiamos
+        setLoading(false)
+      }
+    })
+
+    // 2. Escuchar cambios (Login, Logout, etc.) automáticamente
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchUserProfile(session.user)
+      } else {
         setUser(null)
         setLoading(false)
       }
     })
 
-    return () => {
-      subscription.unsubscribe()
-    }
+    return () => subscription.unsubscribe()
   }, [])
 
-  const checkUser = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user) {
-        await fetchUserProfile(session.user)
-      } else {
-        setLoading(false)
-      }
-    } catch (error) {
-      console.error("Error checking session:", error)
-      setLoading(false)
-    }
-  }
-
+  // Esta función busca los datos extra (rol, nombre) PERO no bloquea si falla
   const fetchUserProfile = async (authUser: any) => {
     try {
-      // Intentamos obtener el rol y nombre desde la tabla 'usuarios'
       const { data, error } = await supabase
         .from('usuarios')
         .select('*')
         .eq('id', authUser.id)
         .single()
 
-      if (error) {
-        console.warn("⚠️ Usuario autenticado pero no encontrado en tabla pública:", error.message)
-        // FALLBACK CRÍTICO: Si falla la BDD, igual dejamos entrar al usuario con datos básicos
-        // Esto evita que te quedes fuera si la tabla 'usuarios' tiene problemas
+      if (error || !data) {
+        console.warn("No se pudo cargar perfil extendido, usando datos básicos.")
+        // Fallback: Usamos los datos básicos de la cuenta para que puedas entrar igual
         setUser({
           id: authUser.id,
           email: authUser.email,
-          nombre: authUser.user_metadata?.nombre || 'Usuario', // Intentamos sacar nombre de metadata
-          rol: 'usuario' // Rol por defecto si no se encuentra
+          nombre: authUser.user_metadata?.nombre || 'Usuario',
+          rol: 'usuario' // Rol por defecto de seguridad
         })
       } else {
-        // Todo correcto, usamos los datos de la base de datos
         setUser(data)
       }
     } catch (err) {
-      console.error("Error fetching profile:", err)
+      console.error("Error crítico leyendo perfil:", err)
     } finally {
       setLoading(false)
     }
   }
 
-  // --- LOGIN ---
+  // --- SIGN IN (LOGIN) ---
   const signIn = async (email: string, password: string) => {
-    // Usamos el login estándar de Supabase
-    const { data, error } = await supabase.auth.signInWithPassword({
+    // Solo hacemos el login. El "onAuthStateChange" de arriba se encargará de actualizar el usuario.
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
-    
-    if (error) {
-        console.error("Login Error:", error.message)
-        throw error
-    }
-    
-    // Si el login es exitoso, forzamos la carga del perfil inmediatamente
-    if (data.user) {
-        await fetchUserProfile(data.user)
-    }
+    if (error) throw error
   }
 
-  // --- REGISTRO ---
+  // --- SIGN UP (REGISTRO) ---
   const signUp = async (email: string, password: string, nombre: string) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { nombre } // Guardamos nombre en metadata de Supabase Auth
-      }
+      options: { data: { nombre } }
     })
     
     if (error) throw error
 
-    // Intentamos crear el registro en la tabla pública manualmente
-    // (Por si el Trigger de la base de datos falla o no existe)
+    // Intentamos crear el registro en la tabla pública
     if (data.user) {
-        const { error: dbError } = await supabase.from('usuarios').insert([{
+        await supabase.from('usuarios').insert([{
             id: data.user.id,
             email: email,
             nombre: nombre,
             rol: 'usuario'
         }])
-        
-        if (dbError) console.log("Nota: El usuario quizás ya fue creado por un Trigger DB", dbError.message)
-        
-        // Auto-login (Cargar perfil)
-        await fetchUserProfile(data.user)
     }
   }
 
-  // --- LOGOUT ---
+  // --- SIGN OUT (SALIR) ---
   const signOut = async () => {
     await supabase.auth.signOut()
-    setUser(null)
+    // No necesitamos setUser(null) aquí, el listener lo hará solo
   }
 
   const value = {
