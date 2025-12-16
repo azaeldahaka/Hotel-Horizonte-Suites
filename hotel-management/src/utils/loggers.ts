@@ -1,34 +1,29 @@
-import { supabase } from '@/lib/supabase' // <--- ESTA ES LA LÍNEA QUE FALTABA
-
-// Definimos los tipos permitidos para el color del icono
-type TipoLog = 'info' | 'success' | 'warning' | 'alert';
+import { supabase } from '@/lib/supabase'
 
 export const logActividad = async (
-  usuarioId: string | undefined, 
+  usuario_id: string | undefined, 
   accion: string, 
   detalles: string, 
-  tipo: TipoLog = 'info'
+  tipo: 'success' | 'warning' | 'alert' | 'info' = 'info'
 ) => {
-  // Si no hay usuario (ej. error de sistema), no guardamos o guardamos como anónimo
-  if (!usuarioId) {
-    console.warn('Intento de log sin usuario:', accion);
-    return;
-  }
+  if (!usuario_id) return; // Si no hay usuario, no logueamos
 
   try {
     const { error } = await supabase.from('historial_actividad').insert([
       {
-        usuario_id: usuarioId,
-        accion: accion,
-        detalles: detalles,
-        tipo: tipo
+        usuario_id,
+        accion,
+        detalles,
+        tipo
       }
     ]);
 
     if (error) {
-      console.error('Error al guardar log en Supabase:', error.message);
+      console.error("❌ Error guardando log:", error.message);
+    } else {
+      console.log("✅ Actividad guardada:", accion);
     }
   } catch (err) {
-    console.error('Error inesperado en logger:', err);
+    console.error("Error crítico en logger:", err);
   }
-};
+}
